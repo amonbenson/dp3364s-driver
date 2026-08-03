@@ -241,8 +241,8 @@ static void set_row_address(int row) {
     }
 }
 
-/* For the test pattern: convert hue to RGB13 */
-static void hue_to_rgb13(float hue_deg, uint16_t *r, uint16_t *g, uint16_t *b) {
+/* For the test pattern: convert hue to 8-bit RGB */
+static void hue_to_rgb8(float hue_deg, uint8_t *r, uint8_t *g, uint8_t *b) {
     float h = fmodf(hue_deg, 360.0f) / 60.0f;
     int i = (int)h;
     float f = h - (float)i;
@@ -282,41 +282,56 @@ static void hue_to_rgb13(float hue_deg, uint16_t *r, uint16_t *g, uint16_t *b) {
             break;
     }
 
-    *r = (uint16_t)(rr * 8191.0f);
-    *g = (uint16_t)(gg * 8191.0f);
-    *b = (uint16_t)(bb * 8191.0f);
+    *r = (uint8_t)(rr * 255.0f);
+    *g = (uint8_t)(gg * 255.0f);
+    *b = (uint8_t)(bb * 255.0f);
 }
 
 /* The rainbow repeats every 64 diagonal steps, so the whole pattern is one
  * table built once at startup. Keeping the frame build free of floating point
  * is most of what makes it fast enough to animate. */
 #define HUE_STEPS 64
-static uint16_t hue_lut[HUE_STEPS][3];
+static uint8_t hue_lut[HUE_STEPS][3];
 static int hue_phase; // advanced by the animation loop, in table steps
 
 static void build_hue_lut(void) {
     for (int i = 0; i < HUE_STEPS; i++) {
-        hue_to_rgb13(i * (360.0f / HUE_STEPS), &hue_lut[i][0], &hue_lut[i][1], &hue_lut[i][2]);
+        hue_to_rgb8(i * (360.0f / HUE_STEPS), &hue_lut[i][0], &hue_lut[i][1], &hue_lut[i][2]);
     }
 }
 
 /* ---- framebuffer ------------------------------------------------------- */
 /*
- * A plain (x, y) RGB framebuffer, 13 bits per channel. Drawing writes here and
- * nothing else; build_display_frame() below turns it into bus words. The two
- * halves are fully independent - drawing code never has to know about scan
- * order, chip splitting, bit serialisation or the RGB1/RGB2 split, and it can
- * take as long as it likes because only the encode step has to be fast.
+ * A plain (x, y) RGB framebuffer. Drawing writes here and nothing else;
+ * build_display_frame() below turns it into bus words. The two halves are
+ * fully independent - drawing code never has to know about scan order, chip
+ * splitting, bit serialisation or the RGB1/RGB2 split, and it can take as long
+ * as it likes because only the encode step has to be fast.
+ *
+ * Drawing works in perceptual 0..255 per channel. The panel's PWM duty is
+ * linear but the eye is not, so a linear ramp spends most of its range looking
+ * equally bright; the gamma table expands 0..255 into the 13-bit duty the
+ * panel wants, which is what the framebuffer actually stores. Raise GAMMA for
+ * a darker mid range, lower it for a brighter one.
  */
 #define PANEL_W TOTAL_COLS
 #define PANEL_H (NUM_ROWS * 2)
+#define FB_MAX 0x1fff // 13 bits of PWM resolution
+#define GAMMA 2.2f
 
 static uint16_t framebuffer[PANEL_H][PANEL_W][3];
+static uint16_t gamma_lut[256];
 
-static inline void fb_set(int x, int y, uint16_t r, uint16_t g, uint16_t b) {
-    framebuffer[y][x][0] = r;
-    framebuffer[y][x][1] = g;
-    framebuffer[y][x][2] = b;
+static void build_gamma_lut(void) {
+    for (int i = 0; i < 256; i++) {
+        gamma_lut[i] = (uint16_t)(powf(i / 255.0f, GAMMA) * FB_MAX + 0.5f);
+    }
+}
+
+static inline void fb_set(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
+    framebuffer[y][x][0] = gamma_lut[r];
+    framebuffer[y][x][1] = gamma_lut[g];
+    framebuffer[y][x][2] = gamma_lut[b];
 }
 
 /* Draw one frame. This is the only place the picture is decided - replace the
@@ -325,7 +340,7 @@ static inline void fb_set(int x, int y, uint16_t r, uint16_t g, uint16_t b) {
 static void draw_frame(void) {
     for (int y = 0; y < PANEL_H; y++) {
         for (int x = 0; x < PANEL_W; x++) {
-            const uint16_t *c = hue_lut[(x + y + hue_phase) & (HUE_STEPS - 1)];
+            const uint8_t *c = hue_lut[(x + y + hue_phase) & (HUE_STEPS - 1)];
 
             fb_set(x, y, c[0], c[1], c[2]);
         }
@@ -631,6 +646,7 @@ void app_main(void) {
     /* Phase 1 first, so the display frame inherits the signal state the
      * register writes leave behind. The frame is built twice: the first pass
      * only warms up the carried state so the second one loops seamlessly. */
+    build_gamma_lut();
     build_hue_lut();
     draw_frame();
 
