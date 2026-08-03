@@ -1,32 +1,40 @@
 /*
- * main.c - DP3364S LED panel driver for the ESP32-S3
+ * main.c - DP3364S RGB LED matrix driver for the ESP32-S3
  *
- * Port of the Raspberry Pi display_dma.c. Same protocol, but the clock comes
- * from the LCD_CAM peripheral instead of being shaped by software, which is
- * what the Pi could never do cleanly.
+ * Drives a 128x64 panel built from DP3364S column driver chips and a binary
+ * row decoder. Once started, the panel is refreshed entirely by hardware: the
+ * CPU only draws frames and never touches a pin during output.
  *
- * How it works:
- *   LCD_CAM runs in i80 (Intel 8080) mode as a plain 16-bit parallel output.
- *   Its PCLK output is the panel's CLK: hardware generated, exact 50% duty,
- *   no jitter, and free of any CPU involvement. The other 13 signals are
- *   data bus bits, so one 16-bit word is exactly one clock cycle:
+ * Signal generation
+ *   The LCD_CAM peripheral runs in i80 mode as a 16-bit parallel output. Its
+ *   PCLK pin drives the panel clock, so the clock is generated in hardware at
+ *   an exact divider of 160 MHz with a 50% duty cycle. The other 13 signals
+ *   are data bus bits, which makes one 16-bit word exactly one clock cycle:
  *
  *     bit  0..5   R1 G1 B1 R2 G2 B2
- *     bit  6..10  A B C D E
+ *     bit  6..10  A B C D E (row address)
  *     bit 11      LAT
  *     bit 12      OE
  *
- *   GDMA feeds the peripheral from a descriptor chain that loops on itself,
- *   so the panel is refreshed continuously without any interrupts.
+ *   GDMA feeds the peripheral from a descriptor chain that loops back on
+ *   itself, so output continues without interrupts or CPU involvement.
  *
- * The stream has two phases, chained together in hardware:
- *   phase 1 runs once and writes every chip register,
- *   phase 2 is one frame of display data and loops forever.
+ * Output stream
+ *   Phase 1 writes every chip register once. Phase 2 is one frame of pixel
+ *   data. The last descriptor of phase 1 points at phase 2, and the last
+ *   descriptor of phase 2 points back at its own start, so the registers are
+ *   written once and the frame then repeats indefinitely.
  *
- * The display samples on the rising edge of CLK - both the data and the latch
- * count that selects a command, which is what the n in send_latches(n) means.
- * The only exception is the SDR command, which samples both edges; that still
- * runs in software before the peripheral takes over the pins.
+ * Protocol
+ *   The panel samples on the rising edge of CLK, both for pixel data and for
+ *   the latch count that selects a command - that count is the n in
+ *   send_latches(n). The one exception is the SDR command, which samples both
+ *   edges; it is bit-banged in software before the peripheral takes the pins.
+ *
+ * Drawing
+ *   draw_frame() fills a plain (x, y) framebuffer and is the only place the
+ *   picture is decided. build_display_frame() encodes that framebuffer into
+ *   bus words. The two are independent of each other.
  */
 
 #include <math.h>
@@ -52,9 +60,9 @@ static const char *TAG = "dp3364";
 
 /* ---- wiring ------------------------------------------------------------ */
 
-/* Must match the actual panel wiring. GPIO 1..14 are all safe on the S3 -
- * they avoid the flash/PSRAM pins (26..37), USB (19, 20) and the strapping
- * pins (0, 45, 46). */
+/* Panel signal to GPIO. These must match the physical wiring. GPIO 1..14 are
+ * safe on the S3: they avoid the flash and PSRAM pins (26..37), USB (19, 20)
+ * and the strapping pins (0, 45, 46). */
 enum {
     PIN_R1 = 1,
     PIN_G1 = 2,
@@ -69,10 +77,10 @@ enum {
     PIN_E = 11,
     PIN_LAT = 12,
     PIN_OE = 13,
-    PIN_CLK = 14, // driven by LCD_CAM PCLK, not by software
+    PIN_CLK = 14, // driven by the LCD_CAM clock output, not by software
 };
 
-/* Bit position of each signal inside the 16-bit bus word */
+/* Position of each signal within the 16-bit bus word */
 enum {
     SBIT_R1 = 0,
     SBIT_G1,
@@ -89,7 +97,7 @@ enum {
     SBIT_OE,
 };
 
-/* Bus bit -> GPIO. Unused bits are -1 and stay unrouted. */
+/* Bus bit to GPIO. Bits carrying no signal are -1 and stay unrouted. */
 static const int8_t BUS_PINS[16] = {
     PIN_R1, PIN_G1, PIN_B1, PIN_R2, PIN_G2, PIN_B2,
     PIN_A, PIN_B, PIN_C, PIN_D, PIN_E,
@@ -99,13 +107,15 @@ static const int8_t BUS_PINS[16] = {
 
 static const uint8_t DATA_BITS[6] = { SBIT_R1, SBIT_G1, SBIT_B1, SBIT_R2, SBIT_G2, SBIT_B2 };
 
-/* build_display_frame() transposes the six data lines with constant shifts,
- * which only works while they are bus bits 0..5 in this exact order. */
+/* build_display_frame() serialises the data lines with constant shifts, which
+ * is only valid while they occupy bus bits 0..5 in this order. */
 _Static_assert(SBIT_R1 == 0 && SBIT_G1 == 1 && SBIT_B1 == 2 && SBIT_R2 == 3 && SBIT_G2 == 4 && SBIT_B2 == 5,
                "the six data lines must stay on bus bits 0..5, in RGB1/RGB2 order");
-static const uint8_t ADDR_BITS[5] = { SBIT_A, SBIT_B, SBIT_C, SBIT_D, SBIT_E }; // pin order for B, C swapped (might be a hardware issue)
+static const uint8_t ADDR_BITS[5] = { SBIT_A, SBIT_B, SBIT_C, SBIT_D, SBIT_E }; // by bit weight: A=1, B=2, C=4, D=8, E=16
 
-/* PCLK = 160 MHz / LCD_CLK_DIV. 16 -> 10 MHz, 12 -> 13.3 MHz, 10 -> 16 MHz. */
+/* Panel clock = 160 MHz / LCD_CLK_DIV. 16 gives 10 MHz, 12 gives 13.3 MHz,
+ * 10 gives 16 MHz. Raising the divider slows the clock for debugging, at the
+ * cost of frame rate and, below roughly 1 MHz, visible flicker. */
 #define LCD_CLK_DIV 16
 #define DCLK_HZ (160000000 / LCD_CLK_DIV)
 
@@ -118,10 +128,12 @@ static const uint8_t ADDR_BITS[5] = { SBIT_A, SBIT_B, SBIT_C, SBIT_D, SBIT_E }; 
 #define CHIPS_PER_CHAIN 8 // number of chips = display width / NUM_CHANNELS = 128 / 16
 #define TOTAL_COLS (CHIPS_PER_CHAIN * NUM_CHANNELS) // display width in pixels
 
+/* One chip configuration register and the value written to each colour */
 typedef struct {
     uint8_t addr, r, g, b;
 } RegEntry;
 
+/* Register descriptions extracted from the datasheet: https://tehno32.ru/sites/default/files/download/led-driver/DP3364S_Rev1.0_EN.pdf */
 static const RegEntry REGS[] = {
     { 0x02, 0x1f, 0x1f, 0x1f },
     { 0x03, 0x00, 0x00, 0x00 }, // Number of PWM display groups (0 = all groups/auto, 1 = disabled, 2..1f = 2..32 groups). More groups introduce flicker at low clock speeds, but give better color depth.
@@ -141,24 +153,30 @@ static const RegEntry REGS[] = {
 };
 #define NUM_REGS (int)(sizeof(REGS) / sizeof(REGS[0]))
 
-#define REG_CLOCKS (3 + 1 + 14 + TOTAL_COLS + 1) // one register write
+/* Clock counts for the two stream phases. One register write is a vsync, a
+ * gap clock, the 14-latch command, the payload, and a closing gap clock. */
+#define REG_CLOCKS (3 + 1 + 14 + TOTAL_COLS + 1)
 #define INIT_CLOCKS (NUM_REGS * REG_CLOCKS)
 #define DATA_CLOCKS (NUM_ROWS * NUM_CHANNELS * CHIPS_PER_CHAIN * 16)
 #define FRAME_CLOCKS (3 + DATA_CLOCKS + 1)
 
-// how long the DMA takes to play one frame, rounded up
+// time the DMA needs to play one frame, rounded up
 #define FRAME_PERIOD_MS ((FRAME_CLOCKS * 1000 + DCLK_HZ - 1) / DCLK_HZ)
 
 
 
 /* ---- stream builder ---------------------------------------------------- */
 /*
- * Each clock is one 16-bit word. The peripheral holds those levels for the
- * whole PCLK period and generates the rising edge inside it, so data is
- * always stable across the edge the chip samples on.
+ * Builds the bus words the DMA plays out. One clock cycle is one word: the
+ * peripheral holds those signal levels for a whole clock period and generates
+ * the rising edge within it, so data is stable across the edge the panel
+ * samples on.
+ *
+ * pending holds the levels for the next clock. The helpers below change it,
+ * then emit_clock() appends it to the stream.
  */
 
-static uint16_t *stream; // buffer currently being filled
+static uint16_t *stream; // buffer being filled
 static size_t stream_len; // clocks written so far
 static uint16_t pending; // signal levels for the next clock
 
@@ -174,7 +192,7 @@ static inline void pin_lo(int bit) {
     pending &= (uint16_t)~(1u << bit);
 }
 
-// Set the RGB1/2 data lines at once
+// Set the RGB1/2 data lines to one bit slice of six 16-bit words, MSB first
 static inline void set_rgb_bit(const uint16_t chain_words[6], int bit_index) {
     int shift = 15 - bit_index;
 
@@ -198,7 +216,7 @@ static void send_clocks(int n) {
     }
 }
 
-// Send n clocks with no RGB data and LAT high
+// Send n clocks with no RGB data and LAT high. n is the command the chip reads.
 static void send_latches(int n) {
     static const uint16_t zero[6] = { 0, 0, 0, 0, 0, 0 };
     set_rgb_bit(zero, 0);
@@ -241,7 +259,7 @@ static void set_row_address(int row) {
     }
 }
 
-/* For the test pattern: convert hue to 8-bit RGB */
+/* Convert a hue in degrees to 8-bit RGB at full saturation and value */
 static void hue_to_rgb8(float hue_deg, uint8_t *r, uint8_t *g, uint8_t *b) {
     float h = fmodf(hue_deg, 360.0f) / 60.0f;
     int i = (int)h;
@@ -287,12 +305,11 @@ static void hue_to_rgb8(float hue_deg, uint8_t *r, uint8_t *g, uint8_t *b) {
     *b = (uint8_t)(bb * 255.0f);
 }
 
-/* The rainbow repeats every 64 diagonal steps, so the whole pattern is one
- * table built once at startup. Keeping the frame build free of floating point
- * is most of what makes it fast enough to animate. */
+/* Colour table for the example pattern. The rainbow repeats every HUE_STEPS
+ * diagonal steps, so it is built once at startup and looked up per pixel. */
 #define HUE_STEPS 64
 static uint8_t hue_lut[HUE_STEPS][3];
-static int hue_phase; // advanced by the animation loop, in table steps
+static int hue_phase; // scroll position, in table steps
 
 static void build_hue_lut(void) {
     for (int i = 0; i < HUE_STEPS; i++) {
@@ -302,17 +319,14 @@ static void build_hue_lut(void) {
 
 /* ---- framebuffer ------------------------------------------------------- */
 /*
- * A plain (x, y) RGB framebuffer. Drawing writes here and nothing else;
- * build_display_frame() below turns it into bus words. The two halves are
- * fully independent - drawing code never has to know about scan order, chip
- * splitting, bit serialisation or the RGB1/RGB2 split, and it can take as long
- * as it likes because only the encode step has to be fast.
+ * A plain (x, y) RGB framebuffer. Drawing writes here and nowhere else, and
+ * build_display_frame() turns it into bus words. Drawing code therefore needs
+ * no knowledge of scan order, chip splitting, bit serialisation or the
+ * RGB1/RGB2 split, and it may take as long as it likes.
  *
- * Drawing works in perceptual 0..255 per channel. The panel's PWM duty is
- * linear but the eye is not, so a linear ramp spends most of its range looking
- * equally bright; the gamma table expands 0..255 into the 13-bit duty the
- * panel wants, which is what the framebuffer actually stores. Raise GAMMA for
- * a darker mid range, lower it for a brighter one.
+ * Drawing works in 0..255 per channel. Panel brightness is linear in PWM duty
+ * but perception is not, so the gamma table expands 0..255 into the 13-bit
+ * duty that is actually stored. A higher GAMMA darkens the mid range.
  */
 #define PANEL_W TOTAL_COLS
 #define PANEL_H (NUM_ROWS * 2)
@@ -334,9 +348,9 @@ static inline void fb_set(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
     framebuffer[y][x][2] = gamma_lut[b];
 }
 
-/* Draw one frame. This is the only place the picture is decided - replace the
- * body with anything: sprites, text, video, per-pixel maths, whatever. The
- * scrolling rainbow is just an example that needs one variable of state. */
+/* Draw one frame into the framebuffer. This is the only place the picture is
+ * decided; replace the body to display something else. The example is a
+ * diagonal rainbow scrolled by hue_phase. */
 static void draw_frame(void) {
     for (int y = 0; y < PANEL_H; y++) {
         for (int x = 0; x < PANEL_W; x++) {
@@ -347,7 +361,8 @@ static void draw_frame(void) {
     }
 }
 
-/* Build the 6 chain words for one register entry */
+/* Build the 6 chain words for one register entry. The register address is the
+ * high byte and the value the low byte, sent to both RGB halves. */
 static void reg_words(int reg, uint16_t words[6]) {
     const RegEntry *e = &REGS[reg];
     uint16_t w = (uint16_t)(e->addr << 8);
@@ -360,9 +375,8 @@ static void reg_words(int reg, uint16_t words[6]) {
     words[5] = (uint16_t)(w | e->b);
 }
 
-/* Phase 1: write every register once, back to back. Played a single time at
- * startup and then never again, so the display phase is never interrupted by
- * a register write. */
+/* Phase 1: write every chip register once, back to back. Played a single time
+ * at startup; the display phase that follows never returns to it. */
 static void build_register_init(uint16_t *dst) {
     stream = dst;
     stream_len = 0;
@@ -378,16 +392,17 @@ static void build_register_init(uint16_t *dst) {
         reg_words(reg, words);
         send_to_allRGB(words, 5);
 
-        // separates this register's latch from the next vsync
+        // keeps this register's latch clear of the next vsync
         send_clocks(1);
     }
 }
 
-/* Phase 2: encode the framebuffer into one frame of display data, preceded by
- * its own vsync. This is pure protocol - it does not care what was drawn.
- * Signal state and render_line carry over between calls; render_line advances
- * 512 times per frame and 512 % NUM_ROWS is 0, so it returns to its starting
- * value and the frame loops seamlessly. */
+/* Phase 2: encode the framebuffer into one frame of pixel data, preceded by a
+ * vsync. This is protocol only and does not depend on what was drawn.
+ *
+ * Signal state and render_line carry over between calls. render_line advances
+ * once per channel, 512 times per frame, and 512 is a multiple of NUM_ROWS, so
+ * it returns to its starting value and the frame loops without a seam. */
 static void build_display_frame(uint16_t *dst) {
     static int render_line = 0;
 
@@ -405,13 +420,16 @@ static void build_display_frame(uint16_t *dst) {
                 const uint16_t *top = framebuffer[line][col];
                 const uint16_t *bot = framebuffer[line + NUM_ROWS][col];
 
-                /* Hot path: 65536 iterations per frame, and pure protocol -
-                 * it serialises whatever the framebuffer holds, MSB first, the
-                 * way the panel's shift registers want it. The six data lines
-                 * are bus bits 0..5, so the transpose needs constant shifts
-                 * only: no variable shift, no branch per line, and the signal
-                 * state stays in a register rather than being read back from
-                 * memory six times per clock. */
+                /* Serialise the six channels of one pixel pair, most
+                 * significant bit first. The data lines are bus bits 0..5, so
+                 * each clock's word is a transpose of the six values built
+                 * from constant shifts. This runs DATA_CLOCKS times per frame
+                 * and is the only performance critical loop in the program.
+                 *
+                 * LAT rises on the last bit of the last chip, latching the 128
+                 * columns just shifted in. The OE pulse is 4 clocks wide,
+                 * except on the first row of a frame where 12 clocks resets
+                 * the chip's internal row counter. */
                 uint16_t w0 = top[0], w1 = top[1], w2 = top[2];
                 uint16_t w3 = bot[0], w4 = bot[1], w5 = bot[2];
                 uint16_t p = pending & (uint16_t)~0x3fu;
@@ -439,30 +457,35 @@ static void build_display_frame(uint16_t *dst) {
                 }
 
                 stream_len = (size_t)(out - stream);
-                pending = p & (uint16_t)~(1u << SBIT_LAT); // the pin_lo(SBIT_LAT) that ended the old loop
+                pending = p & (uint16_t)~(1u << SBIT_LAT); // LAT falls after the last bit
             }
 
+            /* The row scan is independent of the pixel data rate: the chips
+             * hold the frame in their own memory, so advancing the address
+             * once per channel refreshes rows faster than data arrives. */
             render_line = (render_line + 1) % NUM_ROWS;
             set_row_address(render_line);
         }
     }
 
+    /* Blank the outputs before the closing clock, otherwise the last address
+     * stays lit through the next vsync and shows the previous frame. */
     pin_lo(SBIT_OE);
     send_clocks(1);
 }
 
 
 
-/* ---- SDR init (software, before the peripheral takes the pins) --------- */
+/* ---- panel init sequence ----------------------------------------------- */
 
 /*
- * Enter single-edge mode. The datasheet wants exactly 15 clock edges while
- * LAT is high, the last of them falling. Starting from CLK high that is seven
- * full falling/rising pulses plus one closing falling edge, which also leaves
- * the clock low for the peripheral to take over cleanly.
+ * Put the chips into single edge mode. The command needs exactly 15 clock
+ * edges while LAT is high, the last of them falling: starting from CLK high
+ * that is seven complete pulses plus one closing falling edge, which also
+ * leaves the clock low for the peripheral to take over.
  *
  * This is the only command that samples both clock edges, so it cannot be
- * expressed as bus words and has to be bit-banged.
+ * expressed as bus words and is bit-banged while the pins are still GPIOs.
  */
 static void send_sdr(void) {
     ESP_LOGI(TAG, "Sending SDR (enter single-edge mode)");
@@ -490,10 +513,10 @@ static void send_sdr(void) {
 
 
 
-/* ---- LCD_CAM + GDMA ---------------------------------------------------- */
+/* ---- LCD_CAM and GDMA -------------------------------------------------- */
 
-/* dw0.size is 12 bits, so a descriptor covers at most 4095 bytes. Keep it a
- * multiple of 4 so every descriptor holds a whole number of bus words. */
+/* A descriptor's size field is 12 bits, so one covers at most 4095 bytes.
+ * Keeping it a multiple of 4 means every descriptor holds whole bus words. */
 #define DESC_MAX_LEN 4092
 #define DESC_COUNT(bytes) (((bytes) + DESC_MAX_LEN - 1) / DESC_MAX_LEN)
 
@@ -508,8 +531,8 @@ static dma_descriptor_t *frame_desc[2];
 static uint16_t *frame_buf[2];
 static int front_buf;
 
-/* Link n descriptors over one buffer. The tail points wherever the caller
- * wants the stream to continue, which is what makes the chain loop. */
+/* Spread one buffer over n descriptors. tail_next is where the chain
+ * continues after the last one, which is what makes a chain loop. */
 static void desc_link(dma_descriptor_t *d, size_t n, void *buf, size_t bytes, dma_descriptor_t *tail_next, bool tail_eof) {
     uint8_t *p = buf;
 
@@ -528,6 +551,7 @@ static void desc_link(dma_descriptor_t *d, size_t n, void *buf, size_t bytes, dm
     }
 }
 
+/* Configure LCD_CAM as a 16-bit parallel port and attach a DMA channel */
 static void lcd_init(void) {
     periph_module_enable(PERIPH_LCD_CAM_MODULE);
     periph_module_reset(PERIPH_LCD_CAM_MODULE);
@@ -535,7 +559,7 @@ static void lcd_init(void) {
     LCD_CAM.lcd_user.lcd_reset = 1;
     esp_rom_delay_us(1000);
 
-    // PCLK = PLL_F160M / LCD_CLK_DIV, low in the first half cycle and idle low
+    // clock = PLL_F160M / LCD_CLK_DIV, low in the first half cycle and idle low
     LCD_CAM.lcd_clock.lcd_clk_sel = 3;
     LCD_CAM.lcd_clock.lcd_ck_out_edge = 0;
     LCD_CAM.lcd_clock.lcd_ck_idle_edge = 0;
@@ -545,7 +569,7 @@ static void lcd_init(void) {
     LCD_CAM.lcd_clock.lcd_clkm_div_a = 1;
     LCD_CAM.lcd_clock.lcd_clkm_div_b = 0;
 
-    // Plain 16-bit parallel output, no LCD framing of any kind
+    // plain parallel output, none of the LCD framing features
     LCD_CAM.lcd_ctrl.lcd_rgb_mode_en = 0; // i8080 mode, not RGB
     LCD_CAM.lcd_rgb_yuv.lcd_conv_bypass = 0; // no RGB/YUV converter
     LCD_CAM.lcd_misc.lcd_next_frame_en = 0; // do not auto-frame
@@ -556,13 +580,12 @@ static void lcd_init(void) {
     LCD_CAM.lcd_user.lcd_bit_order = 0; // do not reverse bits
     LCD_CAM.lcd_user.lcd_2byte_en = 1; // 16-bit bus
     LCD_CAM.lcd_user.lcd_cmd = 0; // no command phase
-    /* At least one dummy phase is needed for the DMA to trigger reliably. It
-     * costs two clocks before the stream starts, which land ahead of the very
-     * first vsync and are harmless. */
+    /* One dummy phase is required for the DMA to trigger reliably. It costs
+     * two clocks ahead of the stream, which fall before the first vsync. */
     LCD_CAM.lcd_user.lcd_dummy = 1;
     LCD_CAM.lcd_user.lcd_dummy_cyclelen = 1;
 
-    // Route the bus and the clock out through the GPIO matrix
+    // route the bus and the clock out through the GPIO matrix
     for (int i = 0; i < 16; i++) {
         if (BUS_PINS[i] >= 0) {
             esp_rom_gpio_connect_out_signal(BUS_PINS[i], LCD_DATA_OUT0_IDX + i, false, false);
@@ -576,9 +599,9 @@ static void lcd_init(void) {
     ESP_ERROR_CHECK(gdma_new_ahb_channel(&chan_cfg, &dma_chan));
     ESP_ERROR_CHECK(gdma_connect(dma_chan, GDMA_MAKE_TRIGGER(GDMA_TRIG_PERIPH_LCD, 0)));
 
-    /* owner_check and auto_update_desc must both be off: otherwise the DMA
-     * clears the owner bit as it goes and the chain stalls on its second lap
-     * instead of looping forever. */
+    /* Both flags must stay off for an endlessly looping chain: otherwise the
+     * DMA clears each descriptor's owner bit as it passes and stalls on the
+     * second lap. */
     gdma_strategy_config_t strategy = { .owner_check = false, .auto_update_desc = false };
     ESP_ERROR_CHECK(gdma_apply_strategy(dma_chan, &strategy));
 
@@ -586,6 +609,7 @@ static void lcd_init(void) {
     ESP_ERROR_CHECK(gdma_config_transfer(dma_chan, &transfer));
 }
 
+/* Start the DMA at the head of the init chain, then let the peripheral run */
 static void lcd_start(void) {
     gdma_reset(dma_chan);
     esp_rom_delay_us(1000);
@@ -595,12 +619,12 @@ static void lcd_start(void) {
     LCD_CAM.lcd_misc.lcd_afifo_reset = 1;
 
     gdma_start(dma_chan, (intptr_t)&init_desc[0]);
-    esp_rom_delay_us(100); // let the FIFO prime before the peripheral runs
+    esp_rom_delay_us(100); // let the FIFO fill before the peripheral runs
     LCD_CAM.lcd_user.lcd_start = 1;
 }
 
-/* Show the buffer that was last drawn into. Both chains are re-pointed, so it
- * does not matter which one the DMA is currently walking. */
+/* Show the buffer that was last drawn into. Both chains are repointed, so the
+ * chain the DMA happens to be walking does not matter. */
 static void panel_present(void) {
     int back = front_buf ^ 1;
 
@@ -626,8 +650,8 @@ void app_main(void) {
     frame_desc[0] = heap_caps_malloc(FRAME_DESCS * sizeof(dma_descriptor_t), MALLOC_CAP_DMA);
     frame_desc[1] = heap_caps_malloc(FRAME_DESCS * sizeof(dma_descriptor_t), MALLOC_CAP_DMA);
 
-    /* The back buffer is optional: without it the panel still runs, drawing
-     * just has to go straight into the live frame and may tear. */
+    /* The back buffer is optional. Without it the panel still runs, but
+     * drawing goes straight into the live frame and may tear. */
     if (!frame_buf[1] || !frame_desc[1]) {
         ESP_LOGW(TAG, "no room for a back buffer, running single-buffered");
         heap_caps_free(frame_buf[1]);
@@ -643,13 +667,13 @@ void app_main(void) {
         return;
     }
 
-    /* Phase 1 first, so the display frame inherits the signal state the
-     * register writes leave behind. The frame is built twice: the first pass
-     * only warms up the carried state so the second one loops seamlessly. */
     build_gamma_lut();
     build_hue_lut();
     draw_frame();
 
+    /* Phase 1 is built first so the display frame inherits the signal state
+     * the register writes leave behind. The frame is built twice because the
+     * first pass only settles that carried state. */
     build_register_init(init_buf);
     build_display_frame(frame_buf[0]);
     build_display_frame(frame_buf[0]);
@@ -659,8 +683,8 @@ void app_main(void) {
         memcpy(frame_buf[1], frame_buf[0], FRAME_BYTES);
     }
 
-    /* Init runs once and falls through into the frame, which then loops on
-     * itself - the register blocks are never reached again. */
+    /* The init chain falls through into the frame chain, which then loops on
+     * itself, so the register blocks are played exactly once. */
     desc_link(init_desc, INIT_DESCS, init_buf, INIT_BYTES, &frame_desc[0][0], false);
     desc_link(frame_desc[0], FRAME_DESCS, frame_buf[0], FRAME_BYTES, &frame_desc[0][0], true);
 
@@ -668,8 +692,8 @@ void app_main(void) {
         desc_link(frame_desc[1], FRAME_DESCS, frame_buf[1], FRAME_BYTES, &frame_desc[0][0], true);
     }
 
-    /* Drive every line low, then run the SDR sequence while the pins are still
-     * plain GPIOs. The peripheral takes them over immediately afterwards. */
+    /* Drive every line low while the pins are still plain GPIOs, run the init
+     * sequence, then hand the pins over to the peripheral. */
     gpio_config_t io = {
         .pin_bit_mask = 1ULL << PIN_CLK,
         .mode = GPIO_MODE_OUTPUT,
@@ -700,17 +724,14 @@ void app_main(void) {
     ESP_LOGI(TAG, "running - registers written once, frame looping in hardware");
 
     /*
-     * Animation. The DMA keeps replaying the front buffer on its own, so the
-     * loop only has to draw the next frame into the back buffer and flip:
+     * Animation loop. The DMA replays the front buffer by itself, so each pass
+     * only updates the drawing state, draws into the framebuffer, encodes it
+     * into the buffer that is not on screen, and flips.
      *
-     *   1. change whatever get_pattern() reads,
-     *   2. build_display_frame() into the buffer that is NOT on screen,
-     *   3. panel_present() to point both chains at it.
-     *
-     * The flip only takes effect when the DMA reaches the end of the frame it
-     * is currently playing, so a half-drawn buffer is never shown. Waiting one
-     * frame period afterwards makes sure the DMA has actually moved across
-     * before the next draw starts writing into the buffer it just left.
+     * A flip takes effect when the DMA reaches the end of the frame it is
+     * playing, so a partly drawn buffer is never shown. The delay afterwards
+     * covers a full frame period, long enough for the DMA to move across
+     * before the next pass overwrites the buffer it just left.
      */
     int64_t last_report = esp_timer_get_time();
     int frames = 0;
@@ -721,16 +742,16 @@ void app_main(void) {
 
         hue_phase = (hue_phase + 1) & (HUE_STEPS - 1);
 
-        draw_frame();                                   // fill the framebuffer
-        build_display_frame(frame_buf[front_buf ^ 1]);  // encode it for the panel
-        panel_present();                                // show it
+        draw_frame();
+        build_display_frame(frame_buf[front_buf ^ 1]);
+        panel_present();
 
         build_us = (uint32_t)(esp_timer_get_time() - t0);
         frames++;
 
-        /* At the default 100 Hz tick pdMS_TO_TICKS(7) rounds down to 0, and
-         * vTaskDelay(0) only yields - the idle task never gets to run and the
-         * task watchdog eventually fires. Always block for a whole tick. */
+        /* pdMS_TO_TICKS rounds down and reaches zero at the default 100 Hz
+         * tick rate. vTaskDelay(0) only yields, which starves the idle task
+         * and trips the watchdog, so always block for at least one tick. */
         TickType_t wait = pdMS_TO_TICKS(FRAME_PERIOD_MS);
         vTaskDelay(wait ? wait : 1);
 
@@ -740,5 +761,4 @@ void app_main(void) {
             frames = 0;
         }
     }
-
 }
