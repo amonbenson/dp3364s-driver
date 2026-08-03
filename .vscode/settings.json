@@ -5,7 +5,7 @@
   "clangd.arguments": [
     "--background-index",
     "--query-driver=**",
-    "--compile-commands-dir=c:\\pico_build\\dp3364-testpattern\\build"
+    "--compile-commands-dir=c:\\pico_build\\dp3364s-driver\\build"
   ],
   "idf.currentSetup": "C:\\esp\\v5.5.5\\esp-idf",
   "idf.openOcdConfigs": [

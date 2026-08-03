@@ -1,4 +1,4 @@
-# dp3364-testpattern
+# dp3364s-driver
 
 Proof of concept for driving an RGB LED matrix built from **DP3364S** column
 driver chips, using an ESP32-S3.
