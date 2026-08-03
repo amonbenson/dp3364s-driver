@@ -98,6 +98,11 @@ static const int8_t BUS_PINS[16] = {
 };
 
 static const uint8_t DATA_BITS[6] = { SBIT_R1, SBIT_G1, SBIT_B1, SBIT_R2, SBIT_G2, SBIT_B2 };
+
+/* build_display_frame() transposes the six data lines with constant shifts,
+ * which only works while they are bus bits 0..5 in this exact order. */
+_Static_assert(SBIT_R1 == 0 && SBIT_G1 == 1 && SBIT_B1 == 2 && SBIT_R2 == 3 && SBIT_G2 == 4 && SBIT_B2 == 5,
+               "the six data lines must stay on bus bits 0..5, in RGB1/RGB2 order");
 static const uint8_t ADDR_BITS[5] = { SBIT_A, SBIT_B, SBIT_C, SBIT_D, SBIT_E }; // pin order for B, C swapped (might be a hardware issue)
 
 /* PCLK = 160 MHz / LCD_CLK_DIV. 16 -> 10 MHz, 12 -> 13.3 MHz, 10 -> 16 MHz. */
@@ -120,7 +125,7 @@ typedef struct {
 static const RegEntry REGS[] = {
     { 0x02, 0x1f, 0x1f, 0x1f },
     { 0x03, 0x00, 0x00, 0x00 }, // Number of PWM display groups (0 = all groups/auto, 1 = disabled, 2..1f = 2..32 groups). More groups introduce flicker at low clock speeds, but give better color depth.
-    { 0x04, 0x1a, 0x1a, 0x1a }, // Max brightness (0x00..0x1a). Lower values also reduce color depth
+    { 0x04, 0x1a, 0x1a, 0x1a }, // Brightness resolution (0x00..0x1a) (PWM depth)
     { 0x05, 0x04, 0x04, 0x00 },
     { 0x06, 0x39, 0x39, 0x39 }, // GCLK divider: FGCLK = FDCLK * (reg0x06[2:0] + 1)
     { 0x07, 0x00, 0x0c, 0x0c },
@@ -282,19 +287,49 @@ static void hue_to_rgb13(float hue_deg, uint16_t *r, uint16_t *g, uint16_t *b) {
     *b = (uint16_t)(bb * 8191.0f);
 }
 
-/* Hue shift applied to the whole pattern, in degrees. The animation loop
- * advances it between frames; nothing else depends on it. */
-static float hue_offset;
+/* The rainbow repeats every 64 diagonal steps, so the whole pattern is one
+ * table built once at startup. Keeping the frame build free of floating point
+ * is most of what makes it fast enough to animate. */
+#define HUE_STEPS 64
+static uint16_t hue_lut[HUE_STEPS][3];
+static int hue_phase; // advanced by the animation loop, in table steps
 
-/* Generate the pattern for one pixel: a diagonal rainbow across the whole
- * panel, scrolled by hue_offset. This is the only place the frame content is
- * decided - replace it to draw something else. x is 0..TOTAL_COLS-1 and y is
- * 0..NUM_ROWS*2-1, so it is a plain (x, y) framebuffer as far as callers go. */
-static void get_pattern(uint16_t *out, int x, int y) {
-    const float deg_per_step = 360.0f / 64.0f;
-    float hue = (float)(x + y) * deg_per_step + hue_offset;
+static void build_hue_lut(void) {
+    for (int i = 0; i < HUE_STEPS; i++) {
+        hue_to_rgb13(i * (360.0f / HUE_STEPS), &hue_lut[i][0], &hue_lut[i][1], &hue_lut[i][2]);
+    }
+}
 
-    hue_to_rgb13(hue, &out[0], &out[1], &out[2]);
+/* ---- framebuffer ------------------------------------------------------- */
+/*
+ * A plain (x, y) RGB framebuffer, 13 bits per channel. Drawing writes here and
+ * nothing else; build_display_frame() below turns it into bus words. The two
+ * halves are fully independent - drawing code never has to know about scan
+ * order, chip splitting, bit serialisation or the RGB1/RGB2 split, and it can
+ * take as long as it likes because only the encode step has to be fast.
+ */
+#define PANEL_W TOTAL_COLS
+#define PANEL_H (NUM_ROWS * 2)
+
+static uint16_t framebuffer[PANEL_H][PANEL_W][3];
+
+static inline void fb_set(int x, int y, uint16_t r, uint16_t g, uint16_t b) {
+    framebuffer[y][x][0] = r;
+    framebuffer[y][x][1] = g;
+    framebuffer[y][x][2] = b;
+}
+
+/* Draw one frame. This is the only place the picture is decided - replace the
+ * body with anything: sprites, text, video, per-pixel maths, whatever. The
+ * scrolling rainbow is just an example that needs one variable of state. */
+static void draw_frame(void) {
+    for (int y = 0; y < PANEL_H; y++) {
+        for (int x = 0; x < PANEL_W; x++) {
+            const uint16_t *c = hue_lut[(x + y + hue_phase) & (HUE_STEPS - 1)];
+
+            fb_set(x, y, c[0], c[1], c[2]);
+        }
+    }
 }
 
 /* Build the 6 chain words for one register entry */
@@ -333,10 +368,11 @@ static void build_register_init(uint16_t *dst) {
     }
 }
 
-/* Phase 2: one frame of display data, preceded by its own vsync. Signal state
- * and render_line carry over between calls; render_line advances 512 times per
- * frame and 512 % NUM_ROWS is 0, so it returns to its starting value and the
- * frame loops seamlessly. */
+/* Phase 2: encode the framebuffer into one frame of display data, preceded by
+ * its own vsync. This is pure protocol - it does not care what was drawn.
+ * Signal state and render_line carry over between calls; render_line advances
+ * 512 times per frame and 512 % NUM_ROWS is 0, so it returns to its starting
+ * value and the frame loops seamlessly. */
 static void build_display_frame(uint16_t *dst) {
     static int render_line = 0;
 
@@ -351,25 +387,44 @@ static void build_display_frame(uint16_t *dst) {
 
             for (int chip = 0; chip < CHIPS_PER_CHAIN; chip++) {
                 int col = chip * NUM_CHANNELS + channel;
-                uint16_t words[6];
-                get_pattern(&words[0], col, line);
-                get_pattern(&words[3], col, line + NUM_ROWS);
+                const uint16_t *top = framebuffer[line][col];
+                const uint16_t *bot = framebuffer[line + NUM_ROWS][col];
+
+                /* Hot path: 65536 iterations per frame, and pure protocol -
+                 * it serialises whatever the framebuffer holds, MSB first, the
+                 * way the panel's shift registers want it. The six data lines
+                 * are bus bits 0..5, so the transpose needs constant shifts
+                 * only: no variable shift, no branch per line, and the signal
+                 * state stays in a register rather than being read back from
+                 * memory six times per clock. */
+                uint16_t w0 = top[0], w1 = top[1], w2 = top[2];
+                uint16_t w3 = bot[0], w4 = bot[1], w5 = bot[2];
+                uint16_t p = pending & (uint16_t)~0x3fu;
+                uint16_t *out = stream + stream_len;
+                int lat_bit = (chip == CHIPS_PER_CHAIN - 1) ? 15 : -1;
+                int oe_bit = (chip == 0) ? (render_line == 0 ? 12 : 4) : -1;
 
                 for (int bit = 0; bit < 16; bit++) {
-                    set_rgb_bit(words, bit);
-
-                    if (chip == CHIPS_PER_CHAIN - 1 && bit == 15) {
-                        pin_hi(SBIT_LAT);
+                    if (bit == lat_bit) {
+                        p |= (uint16_t)(1u << SBIT_LAT);
+                    }
+                    if (bit == oe_bit) {
+                        p |= (uint16_t)(1u << SBIT_OE);
                     }
 
-                    if (chip == 0 && bit == (render_line == 0 ? 12 : 4)) {
-                        pin_hi(SBIT_OE);
-                    }
+                    *out++ = (uint16_t)(p | (w0 >> 15) | ((w1 >> 15) << 1) | ((w2 >> 15) << 2)
+                                          | ((w3 >> 15) << 3) | ((w4 >> 15) << 4) | ((w5 >> 15) << 5));
 
-                    emit_clock();
+                    w0 <<= 1;
+                    w1 <<= 1;
+                    w2 <<= 1;
+                    w3 <<= 1;
+                    w4 <<= 1;
+                    w5 <<= 1;
                 }
 
-                pin_lo(SBIT_LAT);
+                stream_len = (size_t)(out - stream);
+                pending = p & (uint16_t)~(1u << SBIT_LAT); // the pin_lo(SBIT_LAT) that ended the old loop
             }
 
             render_line = (render_line + 1) % NUM_ROWS;
@@ -576,6 +631,9 @@ void app_main(void) {
     /* Phase 1 first, so the display frame inherits the signal state the
      * register writes leave behind. The frame is built twice: the first pass
      * only warms up the carried state so the second one loops seamlessly. */
+    build_hue_lut();
+    draw_frame();
+
     build_register_init(init_buf);
     build_display_frame(frame_buf[0]);
     build_display_frame(frame_buf[0]);
@@ -645,14 +703,20 @@ void app_main(void) {
     while (1) {
         int64_t t0 = esp_timer_get_time();
 
-        hue_offset = fmodf(hue_offset + 6.0f, 360.0f);
-        build_display_frame(frame_buf[front_buf ^ 1]);
-        panel_present();
+        hue_phase = (hue_phase + 1) & (HUE_STEPS - 1);
+
+        draw_frame();                                   // fill the framebuffer
+        build_display_frame(frame_buf[front_buf ^ 1]);  // encode it for the panel
+        panel_present();                                // show it
 
         build_us = (uint32_t)(esp_timer_get_time() - t0);
         frames++;
 
-        vTaskDelay(pdMS_TO_TICKS(FRAME_PERIOD_MS));
+        /* At the default 100 Hz tick pdMS_TO_TICKS(7) rounds down to 0, and
+         * vTaskDelay(0) only yields - the idle task never gets to run and the
+         * task watchdog eventually fires. Always block for a whole tick. */
+        TickType_t wait = pdMS_TO_TICKS(FRAME_PERIOD_MS);
+        vTaskDelay(wait ? wait : 1);
 
         if (esp_timer_get_time() - last_report >= 5000000) {
             ESP_LOGI(TAG, "%.1f fps drawn, %u us per frame build", frames * 1e6 / (double)(esp_timer_get_time() - last_report), (unsigned) build_us);
