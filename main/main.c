@@ -66,6 +66,7 @@ void app_main(void) {
 
     gfx_separator_t center_sep;
     gfx_separator_config_t center_sep_config = GFX_SEPARATOR_CONFIG_DEFAULT;
+    center_sep_config.appearance = GFX_APPEARANCE_ACCENT;
     center_sep_config.direction = GFX_DIRECTION_VERTICAL;
     gfx_separator_create(&elem_ctx, &center_sep, &center_sep_config);
     gfx_elem_add_child(&root.base, &center_sep.base);

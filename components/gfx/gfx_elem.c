@@ -12,7 +12,7 @@ gfx_color_t gfx_get_appearance_color(const gfx_elem_context_t *ctx, gfx_appearan
         case GFX_APPEARANCE_ACCENT:
             return ctx->theme.colors.accent;
         default:
-            return (gfx_color_t){0, 0, 0}; // Default to black if unknown
+            return (gfx_color_t) { 0, 0, 0 };
     }
 }
 
@@ -87,7 +87,12 @@ void gfx_elem_update(gfx_elem_context_t *ctx, gfx_elem_t *elem) {
     // The root has no parent to arrange it, so it spans the whole screen and kicks off
     // the arrange pass for the entire hierarchy
     if (!elem->parent) {
-        elem->computed_bounds = (gfx_rect_t){ 0, 0, ctx->prim_ctx->size.width, ctx->prim_ctx->size.height };
+        elem->computed_bounds = (gfx_rect_t) {
+            .x = ctx->theme.spacing,
+            .y = ctx->theme.spacing,
+            .width = ctx->prim_ctx->size.width - 2 * ctx->theme.spacing,
+            .height = ctx->prim_ctx->size.height - 2 * ctx->theme.spacing,
+        };
         gfx_elem_arrange(ctx, elem);
     }
 }

@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include "gfx_prim.h"
 
-#define GFX_ELEM_DEBUG_BOUNDS
+// #define GFX_ELEM_DEBUG_BOUNDS
 
 
 
@@ -17,11 +17,11 @@ typedef struct {
 } gfx_theme_t;
 
 #define GFX_THEME_DEFAULT (gfx_theme_t) { \
-    .spacing = 1, \
+    .spacing = 2, \
     .colors = { \
-        .primary = { .r = 255, .g = 255, .b = 255 }, \
+        .primary = { .r = 230, .g = 230, .b = 230 }, \
         .secondary = { .r = 50, .g = 50, .b = 50 }, \
-        .accent = { .r = 255, .g = 128, .b = 0 }, \
+        .accent = { .r = 255, .g = 100, .b = 0 }, \
     } \
 }
 
