@@ -15,7 +15,6 @@
 static const char *TAG = "dp3364s_driver";
 
 #define SCRIPT_PATH "/assets/widget_example.lua"
-#define RENDER_INTERVAL_MS 1000 / 50
 #define FPS_REPORT_INTERVAL_US 5000000
 
 static void call_lua(lua_State *L, const char *fn) {
@@ -91,7 +90,7 @@ void app_main(void) {
         gfx_elem_render(&elem_ctx, &root.base);
 
         dp3364s_update();
-        vTaskDelay(pdMS_TO_TICKS(RENDER_INTERVAL_MS));
+        vTaskDelay(1);
 
         frames++;
         int64_t now = esp_timer_get_time();
