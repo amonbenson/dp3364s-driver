@@ -5,14 +5,12 @@
 
 typedef struct {
     gfx_appearance_t appearance;
-    gfx_alignment_t alignment;
     gfx_direction_t direction;
     int16_t length;
 } gfx_separator_config_t;
 
 #define GFX_SEPARATOR_CONFIG_DEFAULT (gfx_separator_config_t) { \
     .appearance = GFX_APPEARANCE_PRIMARY, \
-    .alignment = GFX_ALIGNMENT_STRETCH, \
     .direction = GFX_DIRECTION_VERTICAL, \
     .length = 1, \
 }

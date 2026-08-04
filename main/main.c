@@ -52,10 +52,9 @@ void app_main(void) {
         .theme = GFX_THEME_DEFAULT,
     };
 
-    gfx_separator_t separator;
+    gfx_separator_t root;
     gfx_separator_config_t separator_config = GFX_SEPARATOR_CONFIG_DEFAULT;
-    gfx_separator_create(&elem_ctx, &separator, &separator_config);
-    separator.base.computed_bounds = (gfx_rect_t) { 2, 2, 5, 7 };
+    gfx_separator_create(&elem_ctx, &root, &separator_config);
 
     lua_State *L = luaL_newstate();
 
@@ -83,10 +82,13 @@ void app_main(void) {
     int frames = 0;
 
     while (1) {
+        // update all elements (this will eventually be done in a separate task, at a lower rate)
+        gfx_elem_update(&elem_ctx, &root.base);
+
         dp3364s_clear();
 
         // call_lua(L, "render");
-        gfx_elem_render(&elem_ctx, &separator.base);
+        gfx_elem_render(&elem_ctx, &root.base);
 
         dp3364s_update();
         vTaskDelay(pdMS_TO_TICKS(RENDER_INTERVAL_MS));

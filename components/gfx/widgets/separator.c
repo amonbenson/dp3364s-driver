@@ -20,17 +20,28 @@ static void gfx_separator_render(gfx_elem_context_t *ctx, gfx_elem_t *elem) {
     gfx_draw_line(ctx->prim_ctx, start, color, end, color);
 }
 
+static void gfx_separator_update(gfx_elem_context_t *ctx, gfx_elem_t *elem) {
+    gfx_separator_t *separator = (gfx_separator_t *) elem;
+
+    // A separator is a leaf with a fixed size along its own direction; whether/how it
+    // grows is up to the caller (via elem->grow_portion), not the separator itself.
+    if (separator->config.direction == GFX_DIRECTION_HORIZONTAL) {
+        elem->minimum_size.width = separator->config.length;
+        elem->minimum_size.height = 1;
+    } else {
+        elem->minimum_size.width = 1;
+        elem->minimum_size.height = separator->config.length;
+    }
+}
+
 void gfx_separator_create(gfx_elem_context_t *ctx, gfx_separator_t *elem, const gfx_separator_config_t *config) {
     elem->config = *config;
 
-    gfx_size_t preferred_size = {
-        .width = config->direction == GFX_DIRECTION_HORIZONTAL ? config->length : 1,
-        .height = config->direction == GFX_DIRECTION_VERTICAL ? config->length : 1
-    };
     gfx_elem_callbacks_t callbacks = {
         .init = NULL,
+        .update = gfx_separator_update,
         .render = gfx_separator_render
     };
 
-    gfx_elem_create(ctx, &elem->base, callbacks, GFX_APPEARANCE_PRIMARY, config->alignment, preferred_size);
+    gfx_elem_create(ctx, &elem->base, callbacks, config->appearance);
 }

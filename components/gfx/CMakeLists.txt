@@ -1,4 +1,4 @@
 idf_component_register(
-    SRCS "gfx_prim.c" "gfx_elem.c" "widgets/separator.c"
+    SRCS "gfx_prim.c" "gfx_elem.c" "widgets/container.c" "widgets/separator.c"
     INCLUDE_DIRS "include"
 )
