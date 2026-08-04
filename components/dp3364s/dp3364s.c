@@ -290,8 +290,8 @@ static void build_gamma_lut(void) {
     }
 }
 
-void dp3364s_set_pixel(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
-    if ((unsigned)x >= PANEL_W || (unsigned)y >= PANEL_H) {
+void dp3364s_set_pixel(int16_t x, int16_t y, uint8_t r, uint8_t g, uint8_t b) {
+    if ((unsigned) x >= PANEL_W || (unsigned) y >= PANEL_H) {
         return;
     }
 

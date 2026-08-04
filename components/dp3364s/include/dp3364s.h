@@ -33,7 +33,7 @@ esp_err_t dp3364s_init(void);
 /* Write one pixel into the framebuffer, 0..255 per channel, gamma-corrected
  * internally. Takes effect on the next dp3364s_update() call. Out-of-range
  * coordinates are ignored. */
-void dp3364s_set_pixel(int x, int y, uint8_t r, uint8_t g, uint8_t b);
+void dp3364s_set_pixel(int16_t x, int16_t y, uint8_t r, uint8_t g, uint8_t b);
 
 /* Encode the framebuffer and present it: the panel shows the new frame at
  * its next refresh, tearing-free. Call once per drawn frame. */
