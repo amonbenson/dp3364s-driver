@@ -20,20 +20,20 @@ void gfx_draw_point(const gfx_prim_context_t *ctx, const gfx_point_t p, const gf
  * number of pixels beyond the first, so dividing by it (once per channel,
  * not per pixel) gives a fixed-point 16.16 step that is just added each
  * iteration - no per-pixel division or float math. */
-void gfx_draw_line(const gfx_prim_context_t *ctx, const gfx_point_t p0, const gfx_color_t c1, const gfx_point_t p1, const gfx_color_t c2) {
-    int dx = gfx_iabs(p1.x - p0.x);
-    int dy = -gfx_iabs(p1.y - p0.y);
-    int sx = (p0.x < p1.x) ? 1 : -1;
-    int sy = (p0.y < p1.y) ? 1 : -1;
+void gfx_draw_line(const gfx_prim_context_t *ctx, const gfx_point_t p1, const gfx_color_t c1, const gfx_point_t p2, const gfx_color_t c2) {
+    int dx = gfx_iabs(p2.x - p1.x);
+    int dy = -gfx_iabs(p2.y - p1.y);
+    int sx = (p1.x < p2.x) ? 1 : -1;
+    int sy = (p1.y < p2.y) ? 1 : -1;
     int err = dx + dy;
     int steps = (dx > -dy) ? dx : -dy;
 
-    int32_t r = (int32_t)c1.r << 16, g = (int32_t)c1.g << 16, b = (int32_t)c1.b << 16;
+    int32_t r = (int32_t) c1.r << 16, g = (int32_t) c1.g << 16, b = (int32_t) c1.b << 16;
     int32_t dr = steps ? (((int32_t) c2.r - c1.r) << 16) / steps : 0;
     int32_t dg = steps ? (((int32_t) c2.g - c1.g) << 16) / steps : 0;
     int32_t db = steps ? (((int32_t) c2.b - c1.b) << 16) / steps : 0;
 
-    int x = p0.x, y = p0.y;
+    int x = p1.x, y = p1.y;
 
     while (true) {
         const gfx_color_t c = {
@@ -43,7 +43,7 @@ void gfx_draw_line(const gfx_prim_context_t *ctx, const gfx_point_t p0, const gf
         };
         gfx_draw_point(ctx, (gfx_point_t) { x, y }, c);
 
-        if (x == p1.x && y == p1.y) {
+        if (x == p2.x && y == p2.y) {
             break;
         }
 

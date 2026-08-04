@@ -1,141 +1,93 @@
-#include <stdio.h>
-#include <string.h>
+#include "esp_littlefs.h"
+#include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_heap_caps.h"
-#include "esp_log.h"
-#include "esp_littlefs.h"
-#include "esp_vfs.h"
-#include <dirent.h>
 
+#include "lauxlib.h"
 #include "lua.h"
 #include "lualib.h"
-#include "lauxlib.h"
 
-#define TAG "dp3364s_driver"
-#define LUA_FILE_PATH "/assets"
+#include "dp3364s.h"
+#include "gfx_prim.h"
+#include "lua_gfx.h"
 
-// Function to log memory usage
-static void log_memory_usage(const char *message)
-{
-    ESP_LOGI(TAG, "Free heap: %d, Min free heap: %d, Largest free block: %d, %s",
-             heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
-             heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT),
-             heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT),
-             message);
+static const char *TAG = "dp3364s_driver";
+
+#define SCRIPT_PATH "/assets/widget_example.lua"
+#define RENDER_INTERVAL_MS 1000 / 50
+#define FPS_REPORT_INTERVAL_US 5000000
+
+static void call_lua(lua_State *L, const char *fn) {
+    lua_getglobal(L, fn);
+
+    // Silently ignore if the function is not defined, since scripts may not implement all callbacks.
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+
+    if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+        ESP_LOGE(TAG, "%s() failed: %s", fn, lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
 }
 
-// Initialize and mount the filesystem
-static void init_filesystem(void)
-{
-    ESP_LOGI(TAG, "Initializing LittleFS filesystem");
+void app_main(void) {
+    ESP_ERROR_CHECK(dp3364s_init());
 
-    esp_vfs_littlefs_conf_t conf = {
-        .base_path = LUA_FILE_PATH,
+    esp_vfs_littlefs_conf_t fs_conf = {
+        .base_path = "/assets",
         .partition_label = "assets",
         .format_if_mount_failed = true,
-        .dont_mount = false,
+    };
+    ESP_ERROR_CHECK(esp_vfs_littlefs_register(&fs_conf));
+
+    static const gfx_prim_context_t ctx = {
+        .width = DP3364S_WIDTH,
+        .height = DP3364S_HEIGHT,
+        .set_pixel = dp3364s_set_pixel,
     };
 
-    esp_err_t err = esp_vfs_littlefs_register(&conf);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to mount or format filesystem: %s", esp_err_to_name(err));
-    } else {
-        ESP_LOGI(TAG, "Filesystem mounted at %s", LUA_FILE_PATH);
-    }
-}
-
-// Function to run a Lua script from file
-static void run_lua_file(const char *file_name, const char *test_name)
-{
-    ESP_LOGI(TAG, "Starting Lua test from file: %s", test_name);
-
-    log_memory_usage("Start of test");
-
     lua_State *L = luaL_newstate();
-    if (L == NULL) {
-        ESP_LOGE(TAG, "Failed to create new Lua state");
+
+    /* Only the primitives a script needs, not the full stdlib - scripts will
+     * eventually arrive from a web interface, so no io/os/package/debug. */
+    static const luaL_Reg libs[] = {
+        { LUA_GNAME, luaopen_base },
+        { LUA_MATHLIBNAME, luaopen_math },
+        { LUA_STRLIBNAME, luaopen_string },
+        { LUA_TABLIBNAME, luaopen_table },
+        { NULL, NULL },
+    };
+    for (const luaL_Reg *lib = libs; lib->func; lib++) {
+        luaL_requiref(L, lib->name, lib->func, 1);
+        lua_pop(L, 1);
+    }
+    lua_gfx_open(L, &ctx);
+
+    if (luaL_dofile(L, SCRIPT_PATH) != LUA_OK) {
+        ESP_LOGE(TAG, "failed to load %s: %s", SCRIPT_PATH, lua_tostring(L, -1));
         return;
     }
-    log_memory_usage("After luaL_newstate");
 
-    luaL_openlibs(L);
+    int64_t last_report = esp_timer_get_time();
+    int frames = 0;
 
-    // Set the Lua module search path
-    if (luaL_dostring(L, "package.path = package.path .. ';./?.lua;/assets/?.lua'")) {
-        ESP_LOGE(TAG, "Failed to set package.path: %s", lua_tostring(L, -1));
-        lua_pop(L, 1);
-    }
-
-    log_memory_usage("After luaL_openlibs");
-
-    // Construct the full file path
-    char full_path[128];
-    snprintf(full_path, sizeof(full_path), LUA_FILE_PATH"/%s", file_name);
-
-    if (luaL_dofile(L, full_path) == LUA_OK) {
-        lua_pop(L, lua_gettop(L));
-    } else {
-        ESP_LOGE(TAG, "Error running Lua script from file '%s': %s", full_path, lua_tostring(L, -1));
-        lua_pop(L, 1);
-    }
-    log_memory_usage("After executing Lua script from file");
-
-    lua_close(L);
-    log_memory_usage("After lua_close");
-
-    ESP_LOGI(TAG, "End of Lua test from file: %s", test_name);
-}
-
-// Function to run an embedded Lua script
-static void run_embedded_lua_test(const char *lua_script, const char *test_name)
-{
-    ESP_LOGI(TAG, "Starting Lua test: %s", test_name);
-
-    log_memory_usage("Start of test");
-
-    lua_State *L = luaL_newstate();
-    if (L == NULL) {
-        ESP_LOGE(TAG, "Failed to create new Lua state");
-        return;
-    }
-    log_memory_usage("After luaL_newstate");
-
-    luaL_openlibs(L);
-    log_memory_usage("After luaL_openlibs");
-
-    if (luaL_dostring(L, lua_script) == LUA_OK) {
-        lua_pop(L, lua_gettop(L));
-    } else {
-        ESP_LOGE(TAG, "Error running embedded Lua script: %s", lua_tostring(L, -1));
-        lua_pop(L, 1);
-    }
-    log_memory_usage("After executing Lua script");
-
-    lua_close(L);
-    log_memory_usage("After lua_close");
-
-    ESP_LOGI(TAG, "End of Lua test: %s", test_name);
-}
-
-void app_main(void)
-{
-    ESP_LOGI(TAG, "Lua Example Starting");
-
-    // Initialize and mount the filesystem
-    init_filesystem();
-
-    // Test 1: Simple embedded Lua script
-    const char *simple_script = "answer = 42; print('The answer is: '..answer)";
-    run_embedded_lua_test(simple_script, "Simple Embedded Script");
-
-    // Test 2: Run Lua script from a file
-    run_lua_file("widget_example.lua", "Fibonacci Script from File");
-
-    ESP_LOGI(TAG, "End of Lua example application.");
-
-    // Prevent the task from ending
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        dp3364s_clear();
+
+        call_lua(L, "render");
+
+        dp3364s_update();
+        vTaskDelay(pdMS_TO_TICKS(RENDER_INTERVAL_MS));
+
+        frames++;
+        int64_t now = esp_timer_get_time();
+        if (now - last_report >= FPS_REPORT_INTERVAL_US) {
+            ESP_LOGI(TAG, "%.1f fps", frames * 1e6 / (double) (now - last_report));
+            last_report = now;
+            frames = 0;
+        }
     }
 }

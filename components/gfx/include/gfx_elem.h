@@ -39,6 +39,7 @@ typedef enum {
 } gfx_direction_t;
 
 
+typedef struct gfx_elem_t gfx_elem_t;
 
 typedef void (*gfx_elem_init_cb)(gfx_elem_context_t *ctx, gfx_elem_t *elem);
 typedef void (*gfx_elem_render_cb)(gfx_elem_context_t *ctx, gfx_elem_t *elem);
@@ -48,11 +49,11 @@ typedef struct {
     gfx_elem_render_cb render;
 } gfx_elem_callbacks_t;
 
-typedef struct {
+struct gfx_elem_t {
     gfx_elem_callbacks_t callbacks;
     gfx_appearance_t appearance;
     gfx_rect_t bounds;
-} gfx_elem_t;
+};
 
 void gfx_elem_create(gfx_elem_context_t *ctx, gfx_elem_t *elem, gfx_elem_callbacks_t callbacks, gfx_appearance_t appearance, gfx_rect_t bounds);
 void gfx_elem_render(gfx_elem_context_t *ctx, gfx_elem_t *elem);

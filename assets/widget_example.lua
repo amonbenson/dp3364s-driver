@@ -1,8 +1,6 @@
-local function fibonacci(n)
-    if n <= 1 then return n end
-    return fibonacci(n - 1) + fibonacci(n - 2)
-end
+local y = 0
 
-local fib_10 = fibonacci(10)
-print('Fibonacci of 10 is: ' .. fib_10)
-return fib_10
+function render()
+    gfx.draw_line(0, y, WIDTH - 1, HEIGHT - y - 1, 255, 255, 255)
+    y = (y + 1) % HEIGHT
+end
