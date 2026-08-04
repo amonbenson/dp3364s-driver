@@ -2,6 +2,10 @@
 
 #include "gfx_prim.h"
 
+#define GFX_ELEM_DEBUG_BOUNDS
+
+
+
 typedef struct {
     int spacing;
     struct {
@@ -20,10 +24,8 @@ typedef struct {
     } \
 }
 
-
-
 typedef struct {
-    gfx_prim_context_t *prim_ctx;
+    const gfx_prim_context_t *prim_ctx;
     gfx_theme_t theme;
 } gfx_elem_context_t;
 
@@ -37,6 +39,14 @@ typedef enum {
     GFX_DIRECTION_HORIZONTAL = 0,
     GFX_DIRECTION_VERTICAL,
 } gfx_direction_t;
+
+typedef enum {
+    GFX_ALIGNMENT_START = 0,
+    GFX_ALIGNMENT_CENTER,
+    GFX_ALIGNMENT_END,
+    GFX_ALIGNMENT_STRETCH,
+} gfx_alignment_t;
+
 
 
 typedef struct gfx_elem_t gfx_elem_t;
@@ -52,23 +62,16 @@ typedef struct {
 struct gfx_elem_t {
     gfx_elem_callbacks_t callbacks;
     gfx_appearance_t appearance;
-    gfx_rect_t bounds;
+    gfx_alignment_t alignment;
+    gfx_size_t preferred_size;
+
+    gfx_rect_t computed_bounds;
+    gfx_elem_t *parent;
+    gfx_elem_t *children;
+    gfx_elem_t *next_sibling;
 };
 
-void gfx_elem_create(gfx_elem_context_t *ctx, gfx_elem_t *elem, gfx_elem_callbacks_t callbacks, gfx_appearance_t appearance, gfx_rect_t bounds);
+gfx_color_t gfx_get_appearance_color(const gfx_elem_context_t *ctx, gfx_appearance_t appearance);
+
+void gfx_elem_create(gfx_elem_context_t *ctx, gfx_elem_t *elem, gfx_elem_callbacks_t callbacks, gfx_appearance_t appearance, gfx_alignment_t alignment, gfx_size_t preferred_size);
 void gfx_elem_render(gfx_elem_context_t *ctx, gfx_elem_t *elem);
-
-
-
-typedef struct {
-    gfx_appearance_t appearance;
-    gfx_direction_t direction;
-    int16_t length;
-} gfx_separator_config_t;
-
-typedef struct {
-    gfx_elem_t base;
-    gfx_separator_config_t config;
-} gfx_separator_t;
-
-void gfx_separator_create(gfx_elem_context_t *ctx, gfx_separator_t *elem, const gfx_separator_config_t *config, int16_t x, int16_t y);

@@ -9,7 +9,7 @@
 #include "lualib.h"
 
 #include "dp3364s.h"
-#include "gfx_prim.h"
+#include "widgets/separator.h"
 #include "lua_gfx.h"
 
 static const char *TAG = "dp3364s_driver";
@@ -43,11 +43,19 @@ void app_main(void) {
     };
     ESP_ERROR_CHECK(esp_vfs_littlefs_register(&fs_conf));
 
-    static const gfx_prim_context_t ctx = {
-        .width = DP3364S_WIDTH,
-        .height = DP3364S_HEIGHT,
+    static const gfx_prim_context_t prim_ctx = {
+        .size = { .width = DP3364S_WIDTH, .height = DP3364S_HEIGHT },
         .set_pixel = dp3364s_set_pixel,
     };
+    static gfx_elem_context_t elem_ctx = {
+        .prim_ctx = &prim_ctx,
+        .theme = GFX_THEME_DEFAULT,
+    };
+
+    gfx_separator_t separator;
+    gfx_separator_config_t separator_config = GFX_SEPARATOR_CONFIG_DEFAULT;
+    gfx_separator_create(&elem_ctx, &separator, &separator_config);
+    separator.base.computed_bounds = (gfx_rect_t) { 2, 2, 5, 7 };
 
     lua_State *L = luaL_newstate();
 
@@ -64,7 +72,7 @@ void app_main(void) {
         luaL_requiref(L, lib->name, lib->func, 1);
         lua_pop(L, 1);
     }
-    lua_gfx_open(L, &ctx);
+    lua_gfx_open(L, &elem_ctx);
 
     if (luaL_dofile(L, SCRIPT_PATH) != LUA_OK) {
         ESP_LOGE(TAG, "failed to load %s: %s", SCRIPT_PATH, lua_tostring(L, -1));
@@ -77,7 +85,8 @@ void app_main(void) {
     while (1) {
         dp3364s_clear();
 
-        call_lua(L, "render");
+        // call_lua(L, "render");
+        gfx_elem_render(&elem_ctx, &separator.base);
 
         dp3364s_update();
         vTaskDelay(pdMS_TO_TICKS(RENDER_INTERVAL_MS));
