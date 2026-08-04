@@ -4,13 +4,13 @@
 #include "gfx_elem.h"
 
 typedef struct {
-    gfx_appearance_t appearance;
     gfx_direction_t direction;
+    gfx_size_t grow;
 } gfx_container_config_t;
 
 #define GFX_CONTAINER_CONFIG_DEFAULT (gfx_container_config_t) { \
-    .appearance = GFX_APPEARANCE_PRIMARY, \
     .direction = GFX_DIRECTION_VERTICAL, \
+    .grow = { 1, 1 }, \
 }
 
 typedef struct {

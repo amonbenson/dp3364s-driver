@@ -2,6 +2,26 @@
 
 #include <stddef.h>
 
+static void gfx_separator_update(gfx_elem_context_t *ctx, gfx_elem_t *elem) {
+    gfx_separator_t *separator = (gfx_separator_t *) elem;
+    bool horizontal = separator->config.direction == GFX_DIRECTION_HORIZONTAL;
+
+    // A separator is a leaf with a fixed size along its own direction.
+    if (horizontal) {
+        elem->minimum_size.width = separator->config.length;
+        elem->minimum_size.height = 1;
+        elem->grow.width = separator->config.grow;
+        elem->grow.height = 0;
+    } else {
+        elem->minimum_size.width = 1;
+        elem->minimum_size.height = separator->config.length;
+        elem->grow.width = 0;
+        elem->grow.height = separator->config.grow;
+    }
+
+    elem->appearance = separator->config.appearance;
+}
+
 static void gfx_separator_render(gfx_elem_context_t *ctx, gfx_elem_t *elem) {
     gfx_separator_t *separator = (gfx_separator_t *) elem;
 
@@ -20,20 +40,6 @@ static void gfx_separator_render(gfx_elem_context_t *ctx, gfx_elem_t *elem) {
     gfx_draw_line(ctx->prim_ctx, start, color, end, color);
 }
 
-static void gfx_separator_update(gfx_elem_context_t *ctx, gfx_elem_t *elem) {
-    gfx_separator_t *separator = (gfx_separator_t *) elem;
-
-    // A separator is a leaf with a fixed size along its own direction; whether/how it
-    // grows is up to the caller (via elem->grow_portion), not the separator itself.
-    if (separator->config.direction == GFX_DIRECTION_HORIZONTAL) {
-        elem->minimum_size.width = separator->config.length;
-        elem->minimum_size.height = 1;
-    } else {
-        elem->minimum_size.width = 1;
-        elem->minimum_size.height = separator->config.length;
-    }
-}
-
 void gfx_separator_create(gfx_elem_context_t *ctx, gfx_separator_t *elem, const gfx_separator_config_t *config) {
     elem->config = *config;
 
@@ -43,5 +49,5 @@ void gfx_separator_create(gfx_elem_context_t *ctx, gfx_separator_t *elem, const 
         .render = gfx_separator_render
     };
 
-    gfx_elem_create(ctx, &elem->base, callbacks, config->appearance);
+    gfx_elem_create(ctx, &elem->base, callbacks);
 }

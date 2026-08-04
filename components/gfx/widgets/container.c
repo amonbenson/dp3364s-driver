@@ -25,6 +25,7 @@ static void gfx_container_update(gfx_elem_context_t *ctx, gfx_elem_t *elem) {
     }
 
     elem->minimum_size = minimum_size;
+    elem->grow = container->config.grow;
 }
 
 static void gfx_container_arrange(gfx_elem_context_t *ctx, gfx_elem_t *elem) {
@@ -38,11 +39,11 @@ static void gfx_container_arrange(gfx_elem_context_t *ctx, gfx_elem_t *elem) {
     gfx_elem_t *child = elem->children;
     while (child) {
         used += horizontal ? child->minimum_size.width : child->minimum_size.height;
-        total_grow += horizontal ? child->grow_portion.width : child->grow_portion.height;
+        total_grow += horizontal ? child->grow.width : child->grow.height;
         child = child->next_sibling;
     }
 
-    // Divide the remaining space amongst all growable children, weighted by grow_portion
+    // Divide the remaining space amongst all growable children, weighted by grow
     uint16_t available = horizontal ? elem->computed_bounds.width : elem->computed_bounds.height;
     uint16_t extra = used < available ? (available - used) : 0;
 
@@ -50,7 +51,7 @@ static void gfx_container_arrange(gfx_elem_context_t *ctx, gfx_elem_t *elem) {
     uint16_t offset = 0;
     child = elem->children;
     while (child) {
-        int32_t child_grow = horizontal ? child->grow_portion.width : child->grow_portion.height;
+        int32_t child_grow = horizontal ? child->grow.width : child->grow.height;
         uint16_t child_share = total_grow > 0 ? (uint16_t) ((uint32_t) extra * child_grow / total_grow) : 0;
         uint16_t child_length = (horizontal ? child->minimum_size.width : child->minimum_size.height) + child_share;
 
@@ -89,5 +90,5 @@ void gfx_container_create(gfx_elem_context_t *ctx, gfx_container_t *elem, const 
         .render = NULL,
     };
 
-    gfx_elem_create(ctx, &elem->base, callbacks, config->appearance);
+    gfx_elem_create(ctx, &elem->base, callbacks);
 }

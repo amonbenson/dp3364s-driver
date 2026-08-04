@@ -9,6 +9,7 @@
 #include "lualib.h"
 
 #include "dp3364s.h"
+#include "widgets/container.h"
 #include "widgets/separator.h"
 #include "lua_gfx.h"
 
@@ -51,9 +52,30 @@ void app_main(void) {
         .theme = GFX_THEME_DEFAULT,
     };
 
-    gfx_separator_t root;
-    gfx_separator_config_t separator_config = GFX_SEPARATOR_CONFIG_DEFAULT;
-    gfx_separator_create(&elem_ctx, &root, &separator_config);
+    gfx_container_t root;
+    gfx_container_config_t container_config = GFX_CONTAINER_CONFIG_DEFAULT;
+    container_config.direction = GFX_DIRECTION_HORIZONTAL;
+    gfx_container_create(&elem_ctx, &root, &container_config);
+
+    gfx_separator_t left_sep;
+    gfx_separator_config_t left_sep_config = GFX_SEPARATOR_CONFIG_DEFAULT;
+    left_sep.config.appearance = GFX_APPEARANCE_ACCENT;
+    left_sep_config.direction = GFX_DIRECTION_HORIZONTAL;
+    gfx_separator_create(&elem_ctx, &left_sep, &left_sep_config);
+    gfx_elem_add_child(&root.base, &left_sep.base);
+
+    gfx_separator_t center_sep;
+    gfx_separator_config_t center_sep_config = GFX_SEPARATOR_CONFIG_DEFAULT;
+    center_sep_config.direction = GFX_DIRECTION_VERTICAL;
+    gfx_separator_create(&elem_ctx, &center_sep, &center_sep_config);
+    gfx_elem_add_child(&root.base, &center_sep.base);
+
+    gfx_separator_t right_sep;
+    gfx_separator_config_t right_sep_config = GFX_SEPARATOR_CONFIG_DEFAULT;
+    right_sep_config.appearance = GFX_APPEARANCE_SECONDARY;
+    right_sep_config.direction = GFX_DIRECTION_HORIZONTAL;
+    gfx_separator_create(&elem_ctx, &right_sep, &right_sep_config);
+    gfx_elem_add_child(&root.base, &right_sep.base);
 
     lua_State *L = luaL_newstate();
 

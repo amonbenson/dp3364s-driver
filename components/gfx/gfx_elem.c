@@ -16,12 +16,12 @@ gfx_color_t gfx_get_appearance_color(const gfx_elem_context_t *ctx, gfx_appearan
     }
 }
 
-void gfx_elem_create(gfx_elem_context_t *ctx, gfx_elem_t *elem, gfx_elem_callbacks_t callbacks, gfx_appearance_t appearance) {
+void gfx_elem_create(gfx_elem_context_t *ctx, gfx_elem_t *elem, gfx_elem_callbacks_t callbacks) {
     elem->callbacks = callbacks;
-    elem->appearance = appearance;
+    elem->appearance = GFX_APPEARANCE_PRIMARY;
 
-    elem->minimum_size = (gfx_size_t){ 0, 0 };
-    elem->grow_portion = (gfx_size_t){ 0, 0 };
+    elem->minimum_size = (gfx_size_t) { 0, 0 };
+    elem->grow = (gfx_size_t) { 0, 0 };
     elem->computed_bounds = (gfx_rect_t) { 0, 0, 0, 0 };
 
     elem->parent = NULL;
@@ -32,6 +32,42 @@ void gfx_elem_create(gfx_elem_context_t *ctx, gfx_elem_t *elem, gfx_elem_callbac
     if (elem->callbacks.init) {
         elem->callbacks.init(ctx, elem);
     }
+}
+
+void gfx_elem_add_child(gfx_elem_t *parent, gfx_elem_t *child) {
+    child->parent = parent;
+    child->next_sibling = NULL;
+
+    if (!parent->children) {
+        parent->children = child;
+        return;
+    }
+
+    gfx_elem_t *last = parent->children;
+    while (last->next_sibling) {
+        last = last->next_sibling;
+    }
+    last->next_sibling = child;
+}
+
+void gfx_elem_remove(gfx_elem_t *elem) {
+    gfx_elem_t *parent = elem->parent;
+    if (!parent) {
+        return;
+    }
+
+    if (parent->children == elem) {
+        parent->children = elem->next_sibling;
+    } else {
+        gfx_elem_t *sibling = parent->children;
+        while (sibling->next_sibling != elem) {
+            sibling = sibling->next_sibling;
+        }
+        sibling->next_sibling = elem->next_sibling;
+    }
+
+    elem->parent = NULL;
+    elem->next_sibling = NULL;
 }
 
 void gfx_elem_update(gfx_elem_context_t *ctx, gfx_elem_t *elem) {
@@ -73,7 +109,7 @@ void gfx_elem_render(gfx_elem_context_t *ctx, gfx_elem_t *elem) {
 
 #ifdef GFX_ELEM_DEBUG_BOUNDS
     // Render the bounds of the element (for debugging purposes, can be removed in production)
-    gfx_color_t debug_color = { 255, 0, 0 };
+    gfx_color_t debug_color = { 100, 0, 0 };
     gfx_draw_rect(ctx->prim_ctx, elem->computed_bounds, debug_color);
 #endif
 

@@ -20,7 +20,7 @@ typedef struct {
     .spacing = 1, \
     .colors = { \
         .primary = { .r = 255, .g = 255, .b = 255 }, \
-        .secondary = { .r = 128, .g = 128, .b = 128 }, \
+        .secondary = { .r = 50, .g = 50, .b = 50 }, \
         .accent = { .r = 255, .g = 128, .b = 0 }, \
     } \
 }
@@ -68,7 +68,7 @@ struct gfx_elem_t {
     gfx_appearance_t appearance;
 
     gfx_size_t minimum_size;
-    gfx_size_t grow_portion;
+    gfx_size_t grow;
     gfx_rect_t computed_bounds;
 
     gfx_elem_t *parent;
@@ -78,7 +78,10 @@ struct gfx_elem_t {
 
 gfx_color_t gfx_get_appearance_color(const gfx_elem_context_t *ctx, gfx_appearance_t appearance);
 
-void gfx_elem_create(gfx_elem_context_t *ctx, gfx_elem_t *elem, gfx_elem_callbacks_t callbacks, gfx_appearance_t appearance);
+void gfx_elem_create(gfx_elem_context_t *ctx, gfx_elem_t *elem, gfx_elem_callbacks_t callbacks);
+
+void gfx_elem_add_child(gfx_elem_t *parent, gfx_elem_t *child);
+void gfx_elem_remove(gfx_elem_t *elem);
 
 void gfx_elem_update(gfx_elem_context_t *ctx, gfx_elem_t *elem);
 void gfx_elem_arrange(gfx_elem_context_t *ctx, gfx_elem_t *elem);
