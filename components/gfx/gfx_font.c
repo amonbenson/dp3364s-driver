@@ -107,7 +107,7 @@ gfx_font_t *gfx_font_load(const char *path) {
     uint16_t glyph_capacity = 0;
     uint32_t bitmap_capacity = 0;
     uint32_t bitmap_size = 0;
-    bool have_ascent = false, have_descent = false;
+    bool have_ascent = false, have_descent = false, have_cap_height = false;
     int bbox_height = 0, bbox_yoff = 0;
 
     bool in_char = false;   // between STARTCHAR and ENDCHAR
@@ -158,6 +158,9 @@ gfx_font_t *gfx_font_load(const char *path) {
             } else if (strncmp(line, "FONT_DESCENT ", 13) == 0) {
                 font->descent = (int8_t) atoi(line + 13);
                 have_descent = true;
+            } else if (strncmp(line, "CAP_HEIGHT ", 11) == 0) {
+                font->cap_height = (int8_t) atoi(line + 11);
+                have_cap_height = true;
             } else if (strncmp(line, "FONTBOUNDINGBOX ", 17) == 0) {
                 int w, h, xo, yo;
                 if (sscanf(line + 17, "%d %d %d %d", &w, &h, &xo, &yo) == 4) {
@@ -180,6 +183,9 @@ gfx_font_t *gfx_font_load(const char *path) {
                     font->ascent = (int8_t) (bbox_height + bbox_yoff);
                     font->descent = (int8_t) (-bbox_yoff);
                     have_ascent = have_descent = true;
+                }
+                if (!have_cap_height) {
+                    font->cap_height = font->ascent;
                 }
                 in_char = true;
                 char_valid = false;

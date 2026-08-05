@@ -5,6 +5,8 @@
 
 typedef struct {
     gfx_direction_t direction;
+    gfx_placement_t justification;
+    gfx_placement_t alignment;
     gfx_size_t grow;
 } gfx_container_config_t;
 

@@ -63,28 +63,78 @@ static void gfx_container_arrange(gfx_elem_context_t *ctx, gfx_elem_t *elem) {
     uint16_t available = horizontal ? elem->computed_bounds.width : elem->computed_bounds.height;
     uint16_t extra = used < available ? (available - used) : 0;
 
+    // Any space left over once growable children have taken their share is distributed
+    // before/after the children according to justification, rather than always sitting
+    // at the end (the old, implicitly START-justified behavior).
+    uint16_t consumed = child_count > 1 ? (uint16_t) ((child_count - 1) * spacing) : 0;
+    child = elem->children;
+    while (child) {
+        int32_t child_grow = horizontal ? child->grow.width : child->grow.height;
+        uint16_t child_share = total_grow > 0 ? (uint16_t) ((uint32_t) extra * child_grow / total_grow) : 0;
+        consumed += (horizontal ? child->minimum_size.width : child->minimum_size.height) + child_share;
+        child = child->next_sibling;
+    }
+    uint16_t leftover = available > consumed ? (available - consumed) : 0;
+
+    uint16_t offset;
+    switch (container->config.justification) {
+        case GFX_PLACEMENT_CENTER:
+            offset = leftover / 2;
+            break;
+        case GFX_PLACEMENT_END:
+            offset = leftover;
+            break;
+        case GFX_PLACEMENT_START:
+        default:
+            offset = 0;
+            break;
+    }
+
     // Lay out each child along the content direction, spaced by a gap between each pair
-    // of children, and stretching each one across the cross axis
-    uint16_t offset = 0;
+    // of children. A child that can grow along the cross axis stretches across it as
+    // before; otherwise it keeps its minimum cross size and is positioned within the
+    // cross axis according to alignment.
     child = elem->children;
     while (child) {
         int32_t child_grow = horizontal ? child->grow.width : child->grow.height;
         uint16_t child_share = total_grow > 0 ? (uint16_t) ((uint32_t) extra * child_grow / total_grow) : 0;
         uint16_t child_length = (horizontal ? child->minimum_size.width : child->minimum_size.height) + child_share;
 
+        int32_t cross_grow = horizontal ? child->grow.height : child->grow.width;
+        uint16_t cross_available = horizontal ? elem->computed_bounds.height : elem->computed_bounds.width;
+        uint16_t cross_min = horizontal ? child->minimum_size.height : child->minimum_size.width;
+
+        uint16_t cross_length = cross_available;
+        uint16_t cross_offset = 0;
+        if (cross_grow <= 0) {
+            cross_length = cross_min < cross_available ? cross_min : cross_available;
+            switch (container->config.alignment) {
+                case GFX_PLACEMENT_CENTER:
+                    cross_offset = (cross_available - cross_length) / 2;
+                    break;
+                case GFX_PLACEMENT_END:
+                    cross_offset = cross_available - cross_length;
+                    break;
+                case GFX_PLACEMENT_START:
+                default:
+                    cross_offset = 0;
+                    break;
+            }
+        }
+
         gfx_rect_t child_bounds;
         if (horizontal) {
             child_bounds = (gfx_rect_t) {
                 .x = elem->computed_bounds.x + offset,
-                .y = elem->computed_bounds.y,
+                .y = elem->computed_bounds.y + cross_offset,
                 .width = child_length,
-                .height = elem->computed_bounds.height,
+                .height = cross_length,
             };
         } else {
             child_bounds = (gfx_rect_t) {
-                .x = elem->computed_bounds.x,
+                .x = elem->computed_bounds.x + cross_offset,
                 .y = elem->computed_bounds.y + offset,
-                .width = elem->computed_bounds.width,
+                .width = cross_length,
                 .height = child_length,
             };
         }

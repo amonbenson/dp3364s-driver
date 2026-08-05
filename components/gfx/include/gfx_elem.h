@@ -17,7 +17,7 @@ typedef struct {
 } gfx_theme_t;
 
 #define GFX_THEME_DEFAULT (gfx_theme_t) { \
-    .spacing = 2, \
+    .spacing = 4, \
     .colors = { \
         .primary = { .r = 230, .g = 230, .b = 230 }, \
         .secondary = { .r = 50, .g = 50, .b = 50 }, \
@@ -42,10 +42,10 @@ typedef enum {
 } gfx_direction_t;
 
 typedef enum {
-    GFX_ALIGNMENT_START = 0,
-    GFX_ALIGNMENT_CENTER,
-    GFX_ALIGNMENT_END,
-} gfx_alignment_t;
+    GFX_PLACEMENT_START = 0,
+    GFX_PLACEMENT_CENTER,
+    GFX_PLACEMENT_END,
+} gfx_placement_t;
 
 
 

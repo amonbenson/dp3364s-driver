@@ -140,6 +140,14 @@ static int l_container(lua_State *L) {
         config.direction = (gfx_direction_t) direction;
 
         opt_size_field(L, 1, "grow", &config.grow);
+
+        lua_Integer justification = config.justification;
+        opt_int_field(L, 1, "justification", &justification);
+        config.justification = (gfx_placement_t) justification;
+
+        lua_Integer alignment = config.alignment;
+        opt_int_field(L, 1, "alignment", &alignment);
+        config.alignment = (gfx_placement_t) alignment;
     }
 
     gfx_container_t *elem = (gfx_container_t *) lua_newuserdata(L, sizeof(gfx_container_t));
@@ -313,6 +321,12 @@ void lua_gfx_open(lua_State *L, gfx_elem_context_t *ctx) {
     lua_setglobal(L, "SECONDARY");
     lua_pushinteger(L, GFX_APPEARANCE_ACCENT);
     lua_setglobal(L, "ACCENT");
+    lua_pushinteger(L, GFX_PLACEMENT_START);
+    lua_setglobal(L, "START");
+    lua_pushinteger(L, GFX_PLACEMENT_CENTER);
+    lua_setglobal(L, "CENTER");
+    lua_pushinteger(L, GFX_PLACEMENT_END);
+    lua_setglobal(L, "END");
 
     lua_newtable(L);
     lua_rawsetp(L, LUA_REGISTRYINDEX, &keepalive_registry_key);

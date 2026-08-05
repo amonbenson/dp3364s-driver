@@ -1,7 +1,7 @@
-local box = gfx.container({ direction = HORIZONTAL })
+local box = gfx.container({ direction = HORIZONTAL, alignment = CENTER, justification = CENTER })
 
-box:add_child(gfx.text({ text = "Hello" }))
-box:add_child(gfx.separator({ direction = VERTICAL, appearance = ACCENT }))
-box:add_child(gfx.text({ text = "12345", font = "tb-8-bold", appearance = SECONDARY }))
+box:add_child(gfx.text({ text = "Hello", appearance = ACCENT }))
+box:add_child(gfx.separator({ direction = VERTICAL }))
+box:add_child(gfx.text({ text = "World" }))
 
 root(box)

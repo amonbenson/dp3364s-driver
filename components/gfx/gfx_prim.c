@@ -66,7 +66,7 @@ void gfx_draw_text(const gfx_prim_context_t *ctx, const gfx_point_t p, const gfx
     }
 
     int pen_x = p.x;
-    int baseline_y = p.y + font->ascent;
+    int baseline_y = p.y + 2 * font->cap_height - font->ascent; // Adjust the baseline for the distance between cap height and ascent
 
     const char *s = text;
     while (*s) {
@@ -113,9 +113,7 @@ gfx_size_t gfx_measure_text(const gfx_font_t *font, const char *text) {
         }
     }
 
-    // Every glyph's advance (DWIDTH) includes the gap to the next glyph, but
-    // the last glyph has no "next" to leave room for - drop that one
-    // trailing gap so measured width matches what's actually drawn.
+    // Every glyph's advance (DWIDTH) includes the gap to the next glyph, so we need to drop the last one
     if (width > 0) {
         width -= 1;
     }

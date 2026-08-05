@@ -25,6 +25,7 @@ typedef struct {
 typedef struct {
     int8_t ascent;
     int8_t descent;
+    int8_t cap_height;
     gfx_glyph_t *glyphs; // sorted ascending by codepoint
     uint16_t glyph_count;
     uint8_t *bitmap;
