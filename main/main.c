@@ -9,8 +9,6 @@
 #include "lualib.h"
 
 #include "dp3364s.h"
-#include "widgets/container.h"
-#include "widgets/separator.h"
 #include "lua_gfx.h"
 
 static const char *TAG = "dp3364s_driver";
@@ -52,32 +50,6 @@ void app_main(void) {
         .theme = GFX_THEME_DEFAULT,
     };
 
-    gfx_container_t root;
-    gfx_container_config_t container_config = GFX_CONTAINER_CONFIG_DEFAULT;
-    container_config.direction = GFX_DIRECTION_HORIZONTAL;
-    gfx_container_create(&elem_ctx, &root, &container_config);
-
-    gfx_separator_t left_sep;
-    gfx_separator_config_t left_sep_config = GFX_SEPARATOR_CONFIG_DEFAULT;
-    left_sep.config.appearance = GFX_APPEARANCE_ACCENT;
-    left_sep_config.direction = GFX_DIRECTION_HORIZONTAL;
-    gfx_separator_create(&elem_ctx, &left_sep, &left_sep_config);
-    gfx_elem_add_child(&root.base, &left_sep.base);
-
-    gfx_separator_t center_sep;
-    gfx_separator_config_t center_sep_config = GFX_SEPARATOR_CONFIG_DEFAULT;
-    center_sep_config.appearance = GFX_APPEARANCE_ACCENT;
-    center_sep_config.direction = GFX_DIRECTION_VERTICAL;
-    gfx_separator_create(&elem_ctx, &center_sep, &center_sep_config);
-    gfx_elem_add_child(&root.base, &center_sep.base);
-
-    gfx_separator_t right_sep;
-    gfx_separator_config_t right_sep_config = GFX_SEPARATOR_CONFIG_DEFAULT;
-    right_sep_config.appearance = GFX_APPEARANCE_SECONDARY;
-    right_sep_config.direction = GFX_DIRECTION_HORIZONTAL;
-    gfx_separator_create(&elem_ctx, &right_sep, &right_sep_config);
-    gfx_elem_add_child(&root.base, &right_sep.base);
-
     lua_State *L = luaL_newstate();
 
     /* Only the primitives a script needs, not the full stdlib - scripts will
@@ -100,17 +72,28 @@ void app_main(void) {
         return;
     }
 
+    // Call the setup method if any. Scripts may also choose to do all setup in the global scope, so this is optional.
+    call_lua(L, "setup");
+
     int64_t last_report = esp_timer_get_time();
     int frames = 0;
 
     while (1) {
-        // update all elements (this will eventually be done in a separate task, at a lower rate)
-        gfx_elem_update(&elem_ctx, &root.base);
+        // let scripts mutate the tree (add/remove/reconfigure elements, or call root()
+        // again to swap in a new one) before layout
+        call_lua(L, "update");
 
         dp3364s_clear();
 
-        // call_lua(L, "render");
-        gfx_elem_render(&elem_ctx, &root.base);
+        // re-read the root every frame since a script may have called root() above
+        gfx_elem_t *root = lua_gfx_get_root(L);
+        if (root) {
+            // update all elements (this will eventually be done in a separate task, at a lower rate)
+            gfx_elem_update(&elem_ctx, root);
+
+            // render the tree to the framebuffer
+            gfx_elem_render(&elem_ctx, root);
+        }
 
         dp3364s_update();
         vTaskDelay(1);

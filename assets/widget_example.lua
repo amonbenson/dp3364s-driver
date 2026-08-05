@@ -1,6 +1,7 @@
-local y = 0
+local box = gfx.container({ direction = HORIZONTAL })
 
-function render()
-    gfx.draw_rect(1, y, WIDTH - 2, HEIGHT - y - 1, 255, 128, 0)
-    y = (y + 1) % HEIGHT
-end
+box:add_child(gfx.separator({ direction = HORIZONTAL }))
+box:add_child(gfx.separator({ direction = VERTICAL, appearance = ACCENT }))
+box:add_child(gfx.separator({ direction = HORIZONTAL, appearance = SECONDARY }))
+
+root(box)
