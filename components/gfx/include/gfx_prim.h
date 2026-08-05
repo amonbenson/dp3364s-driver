@@ -34,6 +34,6 @@ typedef struct {
 
 void gfx_draw_point(const gfx_prim_context_t *ctx, const gfx_point_t p, const gfx_color_t color);
 
-void gfx_draw_line(const gfx_prim_context_t *ctx, const gfx_point_t p1, const gfx_color_t color1, const gfx_point_t p2, const gfx_color_t color2);
+void gfx_draw_line(const gfx_prim_context_t *ctx, const gfx_point_t p1, const gfx_point_t p2, const gfx_color_t color);
 
 void gfx_draw_rect(const gfx_prim_context_t *ctx, const gfx_rect_t rect, const gfx_color_t color);

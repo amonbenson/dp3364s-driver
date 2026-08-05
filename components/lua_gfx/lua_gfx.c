@@ -185,7 +185,7 @@ static int l_draw_line(lua_State *L) {
         (uint8_t) luaL_checkinteger(L, 7),
     };
 
-    gfx_draw_line(ctx_of(L)->prim_ctx, p0, color, p1, color);
+    gfx_draw_line(ctx_of(L)->prim_ctx, p0, p1, color);
     return 0;
 }
 

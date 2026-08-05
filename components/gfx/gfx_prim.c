@@ -20,28 +20,17 @@ void gfx_draw_point(const gfx_prim_context_t *ctx, const gfx_point_t p, const gf
  * number of pixels beyond the first, so dividing by it (once per channel,
  * not per pixel) gives a fixed-point 16.16 step that is just added each
  * iteration - no per-pixel division or float math. */
-void gfx_draw_line(const gfx_prim_context_t *ctx, const gfx_point_t p1, const gfx_color_t color1, const gfx_point_t p2, const gfx_color_t color2) {
+void gfx_draw_line(const gfx_prim_context_t *ctx, const gfx_point_t p1, const gfx_point_t p2, const gfx_color_t color) {
     int dx = gfx_iabs(p2.x - p1.x);
     int dy = -gfx_iabs(p2.y - p1.y);
     int sx = (p1.x < p2.x) ? 1 : -1;
     int sy = (p1.y < p2.y) ? 1 : -1;
     int err = dx + dy;
-    int steps = (dx > -dy) ? dx : -dy;
-
-    int32_t r = (int32_t) color1.r << 16, g = (int32_t) color1.g << 16, b = (int32_t) color1.b << 16;
-    int32_t dr = steps ? (((int32_t) color2.r - color1.r) << 16) / steps : 0;
-    int32_t dg = steps ? (((int32_t) color2.g - color1.g) << 16) / steps : 0;
-    int32_t db = steps ? (((int32_t) color2.b - color1.b) << 16) / steps : 0;
 
     int x = p1.x, y = p1.y;
 
     while (true) {
-        const gfx_color_t c = {
-            .r = (uint8_t) ((r + 0x8000) >> 16),
-            .g = (uint8_t) ((g + 0x8000) >> 16),
-            .b = (uint8_t) ((b + 0x8000) >> 16),
-        };
-        gfx_draw_point(ctx, (gfx_point_t) { x, y }, c);
+        gfx_draw_point(ctx, (gfx_point_t) { x, y }, color);
 
         if (x == p2.x && y == p2.y) {
             break;
@@ -56,10 +45,6 @@ void gfx_draw_line(const gfx_prim_context_t *ctx, const gfx_point_t p1, const gf
             err += dx;
             y += sy;
         }
-
-        r += dr;
-        g += dg;
-        b += db;
     }
 }
 
@@ -69,8 +54,8 @@ void gfx_draw_rect(const gfx_prim_context_t *ctx, const gfx_rect_t rect, const g
     gfx_point_t bottom_left = { .x = rect.x, .y = rect.y + rect.height - 1 };
     gfx_point_t bottom_right = { .x = rect.x + rect.width - 1, .y = rect.y + rect.height - 1 };
 
-    gfx_draw_line(ctx, top_left, c, top_right, c);
-    gfx_draw_line(ctx, top_right, c, bottom_right, c);
-    gfx_draw_line(ctx, bottom_right, c, bottom_left, c);
-    gfx_draw_line(ctx, bottom_left, c, top_left, c);
+    gfx_draw_line(ctx, top_left, top_right, c);
+    gfx_draw_line(ctx, top_right, bottom_right, c);
+    gfx_draw_line(ctx, bottom_right, bottom_left, c);
+    gfx_draw_line(ctx, bottom_left, top_left, c);
 }

@@ -37,7 +37,7 @@ static void gfx_separator_render(gfx_elem_context_t *ctx, gfx_elem_t *elem) {
 
     // Get the color based on the appearance and draw the line
     gfx_color_t color = gfx_get_appearance_color(ctx, elem->appearance);
-    gfx_draw_line(ctx->prim_ctx, start, color, end, color);
+    gfx_draw_line(ctx->prim_ctx, start, end, color);
 }
 
 void gfx_separator_create(gfx_elem_context_t *ctx, gfx_separator_t *elem, const gfx_separator_config_t *config) {
