@@ -2,8 +2,10 @@
 
 #include "lauxlib.h"
 
+#include "gfx_font.h"
 #include "widgets/container.h"
 #include "widgets/separator.h"
+#include "widgets/text.h"
 
 // Shared by every widget userdata (gfx.container()/gfx.separator(), including the default
 // root): __index carries the tree methods (add_child/remove), and __gc unlinks a widget
@@ -112,6 +114,20 @@ static void opt_size_field(lua_State *L, int idx, const char *key, gfx_size_t *o
     lua_pop(L, 1);
 }
 
+// Resolves the optional font-name argument at `idx` (nil/none -> the default
+// font) via the process-wide font cache, raising a Lua error if it fails to
+// load rather than returning NULL - a missing/broken font asset is always a
+// script bug, not a recoverable condition a caller would want to check for.
+static const gfx_font_t *check_font(lua_State *L, int idx) {
+    const char *name = lua_isnoneornil(L, idx) ? NULL : luaL_checkstring(L, idx);
+
+    const gfx_font_t *font = gfx_font_get(name);
+    if (!font) {
+        luaL_error(L, "failed to load font '%s'", name ? name : GFX_FONT_DEFAULT_NAME);
+    }
+    return font;
+}
+
 static int l_container(lua_State *L) {
     gfx_elem_context_t *ctx = ctx_of(L);
     gfx_container_config_t config = GFX_CONTAINER_CONFIG_DEFAULT;
@@ -164,6 +180,39 @@ static int l_separator(lua_State *L) {
     return 1;
 }
 
+static int l_text(lua_State *L) {
+    gfx_elem_context_t *ctx = ctx_of(L);
+    luaL_checktype(L, 1, LUA_TTABLE);
+
+    lua_getfield(L, 1, "text");         // stack: 1=config, 2=text
+    const char *text = luaL_checkstring(L, 2);
+
+    lua_getfield(L, 1, "font");         // stack: 1=config, 2=text, 3=font name
+    const gfx_font_t *font = check_font(L, 3);
+
+    gfx_text_config_t config = GFX_TEXT_CONFIG_DEFAULT;
+    config.text = text;
+    config.font = font;
+
+    lua_Integer appearance = config.appearance;
+    opt_int_field(L, 1, "appearance", &appearance);
+    config.appearance = (gfx_appearance_t) appearance;
+
+    gfx_text_t *elem = (gfx_text_t *) lua_newuserdata(L, sizeof(gfx_text_t)); // stack: ..., 4=elem
+    gfx_text_create(ctx, elem, &config);
+
+    luaL_setmetatable(L, ELEM_METATABLE);
+
+    // config.text aliases the Lua string at stack slot 2, which C holds no
+    // reference to on its own - anchor it as the userdata's uservalue so it
+    // lives (and is freed) together with the widget, instead of possibly
+    // being collected out from under a render() call.
+    lua_pushvalue(L, 2);
+    lua_setuservalue(L, 4);
+
+    return 1;
+}
+
 static int l_draw_point(lua_State *L) {
     gfx_point_t p = { (int16_t) luaL_checkinteger(L, 1), (int16_t) luaL_checkinteger(L, 2) };
     gfx_color_t c = {
@@ -206,12 +255,32 @@ static int l_draw_rect(lua_State *L) {
     return 0;
 }
 
+// gfx.draw_text(x, y, text, font, r, g, b) - font is a name as accepted by
+// gfx.text()/check_font(), or nil for the default font. Kept as a fixed
+// argument (rather than an optional trailing one) so r/g/b stay at a fixed
+// position like every other draw_* call.
+static int l_draw_text(lua_State *L) {
+    gfx_point_t p = { (int16_t) luaL_checkinteger(L, 1), (int16_t) luaL_checkinteger(L, 2) };
+    const char *text = luaL_checkstring(L, 3);
+    const gfx_font_t *font = check_font(L, 4);
+    gfx_color_t color = {
+        (uint8_t) luaL_checkinteger(L, 5),
+        (uint8_t) luaL_checkinteger(L, 6),
+        (uint8_t) luaL_checkinteger(L, 7),
+    };
+
+    gfx_draw_text(ctx_of(L)->prim_ctx, p, font, text, color);
+    return 0;
+}
+
 static const luaL_Reg gfx_funcs[] = {
     { "draw_point", l_draw_point },
     { "draw_line", l_draw_line },
     { "draw_rect", l_draw_rect },
+    { "draw_text", l_draw_text },
     { "container", l_container },
     { "separator", l_separator },
+    { "text", l_text },
     { NULL, NULL },
 };
 

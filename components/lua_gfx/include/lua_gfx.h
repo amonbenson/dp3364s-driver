@@ -6,9 +6,16 @@
 
 /* Registers globals in L:
  *  - WIDTH/HEIGHT, and a "gfx" table with immediate-mode gfx.draw_point/
- *    draw_line/draw_rect bound to ctx.
- *  - gfx.container(config)/gfx.separator(config), which create widgets bound
- *    to ctx and linked into the tree once attached via elem:add_child().
+ *    draw_line/draw_rect/draw_text bound to ctx.
+ *  - gfx.container(config)/gfx.separator(config)/gfx.text(config), which
+ *    create widgets bound to ctx and linked into the tree once attached via
+ *    elem:add_child().
+ *  - Fonts: gfx.text({ text = ..., font = "tb-8-bold" })/gfx.draw_text(...)
+ *    take a font by name rather than a loaded handle - the name is resolved
+ *    against "/assets/fonts/<name>.bdf" and cached by gfx_font_get()
+ *    (components/gfx/gfx_font.c) on first use, omitted/nil falls back to
+ *    GFX_FONT_DEFAULT_NAME. There is no separate "load font" call: scripts
+ *    just name a font wherever one is needed and loading happens lazily.
  *  - root(elem): sets elem as the tree root main.c updates/renders every
  *    frame, and returns it back. Seeded with a default container internally
  *    (not exposed to Lua) so lua_gfx_get_root() has something to return even

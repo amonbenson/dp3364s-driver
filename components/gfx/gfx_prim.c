@@ -59,3 +59,66 @@ void gfx_draw_rect(const gfx_prim_context_t *ctx, const gfx_rect_t rect, const g
     gfx_draw_line(ctx, bottom_right, bottom_left, c);
     gfx_draw_line(ctx, bottom_left, top_left, c);
 }
+
+void gfx_draw_text(const gfx_prim_context_t *ctx, const gfx_point_t p, const gfx_font_t *font, const char *text, const gfx_color_t color) {
+    if (!font) {
+        return;
+    }
+
+    int pen_x = p.x;
+    int baseline_y = p.y + font->ascent;
+
+    const char *s = text;
+    while (*s) {
+        uint32_t codepoint = gfx_utf8_next(&s);
+        const gfx_glyph_t *glyph = gfx_font_find_glyph(font, codepoint);
+        if (!glyph) {
+            continue;
+        }
+
+        // BDF rows run top to bottom; per the BBX field the top row sits
+        // (yoff + height - 1) pixels above the baseline.
+        int top_y = baseline_y - (glyph->yoff + glyph->height - 1);
+        int row_bytes = (glyph->width + 7) / 8;
+        const uint8_t *rows = font->bitmap + glyph->bitmap_offset;
+
+        for (int row = 0; row < glyph->height; row++) {
+            const uint8_t *row_data = rows + row * row_bytes;
+            for (int col = 0; col < glyph->width; col++) {
+                bool set = (row_data[col / 8] >> (7 - (col % 8))) & 1;
+                if (set) {
+                    gfx_point_t px = { (int16_t) (pen_x + glyph->xoff + col), (int16_t) (top_y + row) };
+                    gfx_draw_point(ctx, px, color);
+                }
+            }
+        }
+
+        pen_x += glyph->dwidth;
+    }
+}
+
+gfx_size_t gfx_measure_text(const gfx_font_t *font, const char *text) {
+    if (!font) {
+        return (gfx_size_t) { 0, 0 };
+    }
+
+    int width = 0;
+
+    const char *s = text;
+    while (*s) {
+        uint32_t codepoint = gfx_utf8_next(&s);
+        const gfx_glyph_t *glyph = gfx_font_find_glyph(font, codepoint);
+        if (glyph) {
+            width += glyph->dwidth;
+        }
+    }
+
+    // Every glyph's advance (DWIDTH) includes the gap to the next glyph, but
+    // the last glyph has no "next" to leave room for - drop that one
+    // trailing gap so measured width matches what's actually drawn.
+    if (width > 0) {
+        width -= 1;
+    }
+
+    return (gfx_size_t) { .width = (int16_t) width, .height = (int16_t) (font->ascent + font->descent) };
+}

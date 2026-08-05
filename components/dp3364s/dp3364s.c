@@ -595,12 +595,19 @@ esp_err_t dp3364s_init(void) {
     ESP_LOGI(TAG, "init %u B (%u desc), frame %u B x2 (%u desc each)",
              (unsigned) INIT_BYTES, (unsigned) INIT_DESCS, (unsigned) FRAME_BYTES, (unsigned) FRAME_DESCS);
 
-    uint16_t *init_buf = heap_caps_malloc(INIT_BYTES, MALLOC_CAP_DMA);
-    frame_buf[0] = heap_caps_malloc(FRAME_BYTES, MALLOC_CAP_DMA);
-    frame_buf[1] = heap_caps_malloc(FRAME_BYTES, MALLOC_CAP_DMA);
-    init_desc = heap_caps_malloc(INIT_DESCS * sizeof(dma_descriptor_t), MALLOC_CAP_DMA);
-    frame_desc[0] = heap_caps_malloc(FRAME_DESCS * sizeof(dma_descriptor_t), MALLOC_CAP_DMA);
-    frame_desc[1] = heap_caps_malloc(FRAME_DESCS * sizeof(dma_descriptor_t), MALLOC_CAP_DMA);
+    /* MALLOC_CAP_INTERNAL pins these to internal SRAM even with PSRAM enabled -
+     * ESP32-S3's GDMA can technically reach PSRAM, but that comes with cache-line
+     * alignment/latency behaviour this driver's free-running, CPU-uninvolved
+     * descriptor chain has never been validated against. Internal SRAM alone is
+     * still enough to fit two frames plus descriptors, so there's nothing to gain
+     * from risking it. */
+    const uint32_t dma_caps = MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL;
+    uint16_t *init_buf = heap_caps_malloc(INIT_BYTES, dma_caps);
+    frame_buf[0] = heap_caps_malloc(FRAME_BYTES, dma_caps);
+    frame_buf[1] = heap_caps_malloc(FRAME_BYTES, dma_caps);
+    init_desc = heap_caps_malloc(INIT_DESCS * sizeof(dma_descriptor_t), dma_caps);
+    frame_desc[0] = heap_caps_malloc(FRAME_DESCS * sizeof(dma_descriptor_t), dma_caps);
+    frame_desc[1] = heap_caps_malloc(FRAME_DESCS * sizeof(dma_descriptor_t), dma_caps);
 
     /* The back buffer is optional. Without it the panel still runs, but
      * drawing goes straight into the live frame and may tear. */
@@ -615,7 +622,7 @@ esp_err_t dp3364s_init(void) {
     if (!init_buf || !frame_buf[0] || !init_desc || !frame_desc[0]) {
         ESP_LOGE(TAG, "out of DMA-capable memory (need %u KiB, %u KiB free)",
                  (unsigned)((INIT_BYTES + FRAME_BYTES) / 1024),
-                 (unsigned)(heap_caps_get_free_size(MALLOC_CAP_DMA) / 1024));
+                 (unsigned)(heap_caps_get_free_size(dma_caps) / 1024));
         return ESP_ERR_NO_MEM;
     }
 
